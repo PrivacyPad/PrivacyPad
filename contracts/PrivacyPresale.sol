@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {FHE, externalEuint64, euint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {IUniswapV2Router02} from "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
+import {IPrivacyPresale} from "./IPrivacyPresale.sol";
+import {ConfidentialFungibleToken} from "@openzeppelin/contracts-confidential/token/ConfidentialFungibleToken.sol";
+import {TFHESafeMath} from "@openzeppelin/contracts-confidential/utils/TFHESafeMath.sol";
+import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
+import {PrivacyPresalePurchaseLib} from "./PrivacyPresalePurchaseLib.sol";
+import {PrivacyPresaleFinalizeLib} from "./PrivacyPresaleFinalizeLib.sol";
+import {ConfidentialWETH} from "./ConfidentialWETH.sol";
+
+contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
+    using SafeERC20 for IERC20;
+    using Address for address payable;
+
+    /**
+     * @notice Presale options
+     * @param tokenDeposit Total tokens deposited for sale and liquidity.
+     * @param hardCap Maximum Wei to be raised.
+     * @param softCap Minimum Wei to be raised to consider the presale successful.
+     * @param start Start timestamp of the presale.
+     * @param end End timestamp of the presale.
+     */
+    struct PresaleOptions {
+        uint256 tokenAddLiquidity; // in token decimal
+        uint256 tokenPresale; // in token decimal
+        uint64 hardCap;
+        uint64 softCap;
+        uint128 start;
+        uint128 end;
+    }
+
+    /**
+     * @notice Presale pool
+     * @param token Address of the token to sell.
+     * @param ctoken Address of the confidential token to sell.
+     * @param uniswapV2Router02
+     * @param tokenBalance Token balance in this contract
+     * @param tokensSoldEncrypted
+     * @param tokensSold
+     * @param tokensLiquidity
+     * @param weiRaised
+     * @param state Current state of the presale {1: Active, 2: Waiting for finalize, 3: Canceled, 4: Finalized}.
+     * @param options PresaleOptions struct containing configuration for the presale.
+     */
+    struct Pool {
+        IERC20 token;
+        ConfidentialTokenWrapper ctoken;
+        IUniswapV2Router02 uniswapV2Router02;
+        uint256 tokenBalance;
+        euint64 tokensSoldEncrypted; // in ctoken decimal
+        uint256 tokensSold;
+        uint256 weiRaised;
+        euint64 ethRaisedEncrypted; // in decimal 9
+        uint64 tokenPerEthWithDecimals;
+        address cweth;
+        uint8 state;
+        PresaleOptions options;
+    }
+
+    mapping(address => euint64) public contributions;
+    mapping(address => euint64) public claimableTokens;
+
+    Pool public pool;
+
+    /// @notice Canceled or NOT softcapped and expired
+    modifier onlyRefundable() {
+        if (pool.state != 3 || (block.timestamp > pool.options.end && pool.weiRaised < pool.options.softCap))
+            revert NotRefundable();
+        _;
+    }
+
+    /**
+     * @param _cweth Address of confidential WETH.
+     * @param _token Address of the presale token.
+     * @param _ctoken Address of the confidential token to sell.
+     * @param _uniswapV2Router02 Address of the Uniswap V2 router.
+     * @param _options Configuration options for the presale.
+     */
+    constructor(
+        address _owner,
+        address _cweth,
+        address _token,
+        address _ctoken,
+        address _uniswapV2Router02,
+        PresaleOptions memory _options
+    ) Ownable(_owner) {
+        _prevalidatePool(_options);
+
+        pool.uniswapV2Router02 = IUniswapV2Router02(_uniswapV2Router02);
+        pool.token = IERC20(_token);
+        pool.ctoken = ConfidentialTokenWrapper(_ctoken);
+        pool.cweth = _cweth;
+        pool.options = _options;
+
+        uint256 rate = ConfidentialTokenWrapper(_ctoken).rate();
+
+        pool.state = 1;
+        pool.tokenBalance = pool.options.tokenAddLiquidity + pool.options.tokenPresale;
+        pool.tokenPerEthWithDecimals = SafeCast.toUint64(pool.options.tokenPresale / rate) / pool.options.hardCap;
+
+        emit PoolInitialized(
+            msg.sender,
+            pool.options.tokenAddLiquidity + pool.options.tokenPresale,
+            pool.options.tokenAddLiquidity,
+            pool.options.tokenPresale,
+            block.timestamp
+        );
+    }
+
+    // to unwrap cweth to eth
+    receive() external payable {}
+
+    function purchase(address beneficiary, externalEuint64 encryptedAmount, bytes calldata inputProof) external {
+        PrivacyPresalePurchaseLib.handlePurchase(
+            pool,
+            contributions,
+            claimableTokens,
+            beneficiary,
+            encryptedAmount,
+            inputProof
+        );
+    }
+
+    function _prevalidatePurchase() internal view returns (bool) {
+        if (pool.state != 1) revert InvalidState(pool.state);
+        if (block.timestamp < pool.options.start || block.timestamp > pool.options.end) revert NotInPurchasePeriod();
+        return true;
+    }
+
+    /**
+     * @param _options The presale options.
+     * @return True if the pool configuration is valid.
+     */
+    function _prevalidatePool(PresaleOptions memory _options) internal view returns (bool) {
+        if (_options.softCap == 0 || _options.softCap < _options.hardCap / 2) revert InvalidCapValue();
+        if (_options.start > block.timestamp || _options.end < _options.start) revert InvalidTimestampValue();
+        return true;
+    }
+
+    function requestFinalizePresaleState() external {
+        PrivacyPresaleFinalizeLib.handleRequestFinalizePresaleState(pool);
+    }
+
+    function finalizePreSale(
+        uint256 requestID,
+        uint64 ethRaised,
+        uint64 tokensSold,
+        bytes[] memory signatures
+    ) public virtual {
+        PrivacyPresaleFinalizeLib.handleFinalizePreSale(
+            pool,
+            ConfidentialWETH(pool.cweth),
+            pool.ctoken,
+            pool.token,
+            requestID,
+            ethRaised,
+            tokensSold,
+            signatures
+        );
+    }
+}

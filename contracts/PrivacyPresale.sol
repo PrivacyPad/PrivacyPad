@@ -13,8 +13,7 @@ import {TFHESafeMath} from "@openzeppelin/contracts-confidential/utils/TFHESafeM
 import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
-import {PrivacyPresalePurchaseLib} from "./PrivacyPresalePurchaseLib.sol";
-import {PrivacyPresaleFinalizeLib} from "./PrivacyPresaleFinalizeLib.sol";
+import {PrivacyPresaleLib} from "./PrivacyPresaleLib.sol";
 import {ConfidentialWETH} from "./ConfidentialWETH.sol";
 
 contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
@@ -68,6 +67,8 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
 
     mapping(address => euint64) public contributions;
     mapping(address => euint64) public claimableTokens;
+    mapping(address => bool) public claimed;
+    mapping(address => bool) public refunded;
 
     Pool public pool;
 
@@ -120,7 +121,11 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     receive() external payable {}
 
     function purchase(address beneficiary, externalEuint64 encryptedAmount, bytes calldata inputProof) external {
-        PrivacyPresalePurchaseLib.handlePurchase(
+        // Validate purchase
+        require(pool.state == 1, "Invalid state");
+        require(block.timestamp >= pool.options.start && block.timestamp <= pool.options.end, "Not in purchase period");
+
+        PrivacyPresaleLib.handlePurchase(
             pool,
             contributions,
             claimableTokens,
@@ -128,6 +133,31 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
             encryptedAmount,
             inputProof
         );
+    }
+
+    function claimTokens(address beneficiary) external {
+        require(pool.state == 4, "Invalid state");
+        require(!claimed[msg.sender], "Already claimed");
+        claimed[msg.sender] = true;
+
+        euint64 claimableToken = claimableTokens[msg.sender];
+
+        FHE.allowTransient(claimableToken, address(pool.ctoken));
+
+        // tramsfer claimable token to beneficiary
+        pool.ctoken.confidentialTransfer(beneficiary, claimableToken);
+    }
+
+    function refund(address beneficiary) external {
+        require(pool.state == 3, "Invalid state");
+        require(!refunded[msg.sender], "Already refunded");
+
+        FHE.allowTransient(contributions[msg.sender], address(pool.cweth));
+
+        // transfer cweth balance to beneficiary
+        ConfidentialWETH(pool.cweth).confidentialTransfer(beneficiary, contributions[msg.sender]);
+
+        refunded[msg.sender] = true;
     }
 
     function _prevalidatePurchase() internal view returns (bool) {
@@ -147,7 +177,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     }
 
     function requestFinalizePresaleState() external {
-        PrivacyPresaleFinalizeLib.handleRequestFinalizePresaleState(pool);
+        PrivacyPresaleLib.handleRequestFinalizePresaleState(pool);
     }
 
     function finalizePreSale(
@@ -155,9 +185,13 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         uint64 ethRaised,
         uint64 tokensSold,
         bytes[] memory signatures
-    ) public virtual {
-        PrivacyPresaleFinalizeLib.handleFinalizePreSale(
+    ) external virtual {
+        // must be at the top of the function (there in assembly relate to calldata layout int the FHE.sol)
+        FHE.checkSignatures(requestID, signatures);
+
+        PrivacyPresaleLib.handleFinalizePreSale(
             pool,
+            owner(),
             ConfidentialWETH(pool.cweth),
             pool.ctoken,
             pool.token,

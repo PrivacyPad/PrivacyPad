@@ -4,8 +4,13 @@ pragma solidity ^0.8.24;
 import {FHE, externalEuint64, euint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
 import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
 import {PrivacyPresale} from "./PrivacyPresale.sol";
+import {ConfidentialWETH} from "./ConfidentialWETH.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-library PrivacyPresalePurchaseLib {
+library PrivacyPresaleLib {
+    using SafeERC20 for IERC20;
+
     function handlePurchase(
         PrivacyPresale.Pool storage pool,
         mapping(address => euint64) storage contributions,
@@ -14,10 +19,6 @@ library PrivacyPresalePurchaseLib {
         externalEuint64 encryptedAmount,
         bytes calldata inputProof
     ) external {
-        // Validate purchase
-        require(pool.state == 1, "Invalid state");
-        require(block.timestamp >= pool.options.start && block.timestamp <= pool.options.end, "Not in purchase period");
-
         euint64 transferAmount = FHE.fromExternal(encryptedAmount, inputProof);
         FHE.allowTransient(transferAmount, pool.cweth);
         euint64 transferred = ConfidentialTokenWrapper(pool.cweth).confidentialTransferFrom(
@@ -50,5 +51,53 @@ library PrivacyPresalePurchaseLib {
         FHE.allowThis(pool.tokensSoldEncrypted);
         FHE.allowThis(claimableTokens[beneficiary]);
         FHE.allow(claimableTokens[beneficiary], beneficiary);
+    }
+
+    function handleRequestFinalizePresaleState(PrivacyPresale.Pool storage pool) external {
+        require(pool.state == 1, "Presale is not active");
+        require(block.timestamp >= pool.options.end, "Presale is not ended");
+        pool.state = 2;
+        bytes32[] memory cts = new bytes32[](2);
+        cts[0] = euint64.unwrap(pool.ethRaisedEncrypted);
+        cts[1] = euint64.unwrap(pool.tokensSoldEncrypted);
+        uint256 requestID = FHE.requestDecryption(cts, PrivacyPresale.finalizePreSale.selector);
+    }
+
+    function handleFinalizePreSale(
+        PrivacyPresale.Pool storage pool,
+        address poolOwner,
+        ConfidentialWETH ceth,
+        ConfidentialTokenWrapper ctoken,
+        IERC20 token,
+        uint256 requestID,
+        uint64 ethRaised,
+        uint64 tokensSold,
+        bytes[] memory signatures
+    ) external {
+        uint256 rate = ctoken.rate();
+        pool.weiRaised = ethRaised * 10 ** 9;
+        pool.tokensSold = tokensSold * rate;
+
+        if (ethRaised < pool.options.softCap) {
+            pool.state = 3;
+
+            // transfer back all token to the pool owner
+            token.safeTransfer(poolOwner, pool.options.tokenPresale);
+        } else {
+            pool.state = 4;
+
+            // transfer unsold token to poolOwner
+            if (pool.options.tokenPresale > pool.tokensSold) {
+                token.safeTransfer(poolOwner, pool.options.tokenPresale - pool.tokensSold);
+            }
+
+            // wrap all sold token to ctoken
+            token.approve(address(ctoken), pool.tokensSold);
+            ctoken.wrap(address(this), pool.tokensSold);
+
+            // unwrap all ceth in the contract to eth to add liquidity
+            FHE.allowTransient(pool.ethRaisedEncrypted, address(ceth));
+            ceth.withdraw(address(this), address(this), pool.ethRaisedEncrypted);
+        }
     }
 }

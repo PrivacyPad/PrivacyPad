@@ -11,6 +11,10 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 library PrivacyPresaleLib {
     using SafeERC20 for IERC20;
 
+    /**
+     * @notice Handles purchase logic with aggressive storage read optimization
+     * @dev Caches all storage variables to minimize SLOAD operations
+     */
     function handlePurchase(
         PrivacyPresale.Pool storage pool,
         mapping(address => euint64) storage contributions,
@@ -19,85 +23,151 @@ library PrivacyPresaleLib {
         externalEuint64 encryptedAmount,
         bytes calldata inputProof
     ) external {
+        // Cache ALL frequently accessed storage variables to minimize SLOAD operations
+        address cweth = pool.cweth;
+        uint64 tokenPerEthWithDecimals = pool.tokenPerEthWithDecimals;
+        uint64 hardCap = pool.options.hardCap;
+
+        // Cache user's existing contributions and claimable tokens to avoid multiple storage reads
+        euint64 userContribution = contributions[beneficiary];
+        euint64 userClaimableTokens = claimableTokens[beneficiary];
+
+        // Convert external encrypted amount to internal format
         euint64 transferAmount = FHE.fromExternal(encryptedAmount, inputProof);
-        FHE.allowTransient(transferAmount, pool.cweth);
-        euint64 transferred = ConfidentialTokenWrapper(pool.cweth).confidentialTransferFrom(
+        FHE.allowTransient(transferAmount, cweth);
+
+        // Perform confidential transfer
+        euint64 transferred = ConfidentialTokenWrapper(cweth).confidentialTransferFrom(
             beneficiary,
             address(this),
             transferAmount
         );
-        pool.ethRaisedEncrypted = FHE.add(pool.ethRaisedEncrypted, transferred);
 
-        ebool isAbove = FHE.gt(pool.ethRaisedEncrypted, pool.options.hardCap);
-        euint64 refundAmount = FHE.select(
-            isAbove,
-            FHE.sub(pool.ethRaisedEncrypted, pool.options.hardCap),
-            FHE.asEuint64(0)
-        );
-        pool.ethRaisedEncrypted = FHE.sub(pool.ethRaisedEncrypted, refundAmount);
+        // Cache current eth raised to avoid multiple storage reads
+        euint64 currentEthRaised = pool.ethRaisedEncrypted;
+        euint64 newEthRaised = FHE.add(currentEthRaised, transferred);
+
+        // Check if hard cap exceeded and calculate refund using cached values
+        ebool isAbove = FHE.gt(newEthRaised, hardCap);
+        euint64 refundAmount = FHE.select(isAbove, FHE.sub(newEthRaised, hardCap), FHE.asEuint64(0));
+
+        // Calculate final eth raised and contribution amount
+        euint64 finalEthRaised = FHE.sub(newEthRaised, refundAmount);
+        euint64 contributeAmount = FHE.sub(transferred, refundAmount);
+
+        // Update storage variables in batch to minimize SSTORE operations
+        pool.ethRaisedEncrypted = finalEthRaised;
         FHE.allowThis(pool.ethRaisedEncrypted);
 
-        euint64 contributeAmount = FHE.sub(transferred, refundAmount);
-        FHE.allowTransient(refundAmount, pool.cweth);
-        ConfidentialTokenWrapper(pool.cweth).confidentialTransfer(beneficiary, refundAmount);
+        // Process refund if needed
+        FHE.allowTransient(refundAmount, cweth);
+        ConfidentialTokenWrapper(cweth).confidentialTransfer(beneficiary, refundAmount);
 
-        contributions[beneficiary] = FHE.add(contributions[beneficiary], contributeAmount);
-        FHE.allowThis(contributions[beneficiary]);
-        FHE.allow(contributions[beneficiary], beneficiary);
+        // Calculate new user contributions and claimable tokens using cached values
+        euint64 newUserContribution = FHE.add(userContribution, contributeAmount);
+        euint64 tokensSoldEncrypted = FHE.mul(contributeAmount, tokenPerEthWithDecimals);
+        euint64 newUserClaimableTokens = FHE.add(userClaimableTokens, tokensSoldEncrypted);
 
-        euint64 tokensSoldEncrypted = FHE.mul(contributeAmount, pool.tokenPerEthWithDecimals);
-        claimableTokens[beneficiary] = FHE.add(claimableTokens[beneficiary], tokensSoldEncrypted);
-        pool.tokensSoldEncrypted = FHE.add(pool.tokensSoldEncrypted, tokensSoldEncrypted);
-        FHE.allowThis(pool.tokensSoldEncrypted);
-        FHE.allowThis(claimableTokens[beneficiary]);
-        FHE.allow(claimableTokens[beneficiary], beneficiary);
+        // Cache current tokens sold to avoid storage read
+        euint64 currentTokensSold = pool.tokensSoldEncrypted;
+        euint64 newTokensSold = FHE.add(currentTokensSold, tokensSoldEncrypted);
+
+        // Update all storage variables in batch
+        contributions[beneficiary] = newUserContribution;
+        claimableTokens[beneficiary] = newUserClaimableTokens;
+        pool.tokensSoldEncrypted = newTokensSold;
+
+        // Batch FHE allow operations to minimize gas cost
+        FHE.allowThis(newUserContribution);
+        FHE.allow(newUserContribution, beneficiary);
+        FHE.allowThis(newTokensSold);
+        FHE.allowThis(newUserClaimableTokens);
+        FHE.allow(newUserClaimableTokens, beneficiary);
     }
 
+    /**
+     * @notice Requests finalization of presale state with minimal storage reads
+     * @dev Caches pool state and options to reduce storage access
+     */
     function handleRequestFinalizePresaleState(PrivacyPresale.Pool storage pool) external {
-        require(pool.state == 1, "Presale is not active");
-        require(block.timestamp >= pool.options.end, "Presale is not ended");
+        // Cache pool state and end time to avoid multiple storage reads
+        uint8 currentState = pool.state;
+        uint128 endTime = pool.options.end;
+
+        require(currentState == 1, "Presale is not active");
+        require(block.timestamp >= endTime, "Presale is not ended");
+
         pool.state = 2;
+
+        // Cache encrypted values to avoid multiple storage reads
+        euint64 ethRaisedEncrypted = pool.ethRaisedEncrypted;
+        euint64 tokensSoldEncrypted = pool.tokensSoldEncrypted;
+
+        // Optimize array creation by using fixed size array
         bytes32[] memory cts = new bytes32[](2);
-        cts[0] = euint64.unwrap(pool.ethRaisedEncrypted);
-        cts[1] = euint64.unwrap(pool.tokensSoldEncrypted);
-        uint256 requestID = FHE.requestDecryption(cts, PrivacyPresale.finalizePreSale.selector);
+        cts[0] = euint64.unwrap(ethRaisedEncrypted);
+        cts[1] = euint64.unwrap(tokensSoldEncrypted);
+
+        FHE.requestDecryption(cts, PrivacyPresale.finalizePreSale.selector);
     }
 
+    /**
+     * @notice Finalizes presale with aggressive storage read optimization
+     * @dev Caches all storage variables and combines operations to minimize gas cost
+     */
     function handleFinalizePreSale(
         PrivacyPresale.Pool storage pool,
         address poolOwner,
         ConfidentialWETH ceth,
         ConfidentialTokenWrapper ctoken,
         IERC20 token,
-        uint256 requestID,
         uint64 ethRaised,
-        uint64 tokensSold,
-        bytes[] memory signatures
+        uint64 tokensSold
     ) external {
+        // Cache ALL frequently accessed storage values to minimize SLOAD operations
         uint256 rate = ctoken.rate();
-        pool.weiRaised = ethRaised * 10 ** 9;
-        pool.tokensSold = tokensSold * rate;
+        uint256 tokenPresale = pool.options.tokenPresale;
+        uint256 tokenAddLiquidity = pool.options.tokenAddLiquidity;
+        uint64 softCap = pool.options.softCap;
+        euint64 ethRaisedEncrypted = pool.ethRaisedEncrypted;
 
-        if (ethRaised < pool.options.softCap) {
+        // Calculate all values once and reuse to avoid redundant calculations
+        uint256 weiRaised = ethRaised * 1e9; // Use constant instead of 10**9
+        uint256 tokensSoldValue = tokensSold * rate;
+
+        // Update storage variables in batch
+        pool.weiRaised = weiRaised;
+        pool.tokensSold = tokensSoldValue;
+
+        if (ethRaised < softCap) {
+            // Presale failed - return tokens to owner
             pool.state = 3;
-
-            // transfer back all token to the pool owner
-            token.safeTransfer(poolOwner, pool.options.tokenPresale);
+            token.safeTransfer(poolOwner, tokenPresale);
         } else {
+            // Presale successful - process finalization
             pool.state = 4;
 
-            // transfer unsold token to poolOwner
-            if (pool.options.tokenPresale > pool.tokensSold) {
-                token.safeTransfer(poolOwner, pool.options.tokenPresale - pool.tokensSold);
+            // Calculate unsold tokens and leftover liquidity tokens using cached values
+            if (tokenPresale > tokensSoldValue) {
+                uint256 unsoldToken = tokenPresale - tokensSoldValue;
+                uint256 leftOverLiquidityToken = tokenAddLiquidity -
+                    (tokenAddLiquidity * tokensSoldValue) /
+                    tokenPresale;
+
+                // Combine transfers to reduce gas cost
+                token.safeTransfer(poolOwner, unsoldToken + leftOverLiquidityToken);
             }
 
-            // wrap all sold token to ctoken
-            token.approve(address(ctoken), pool.tokensSold);
-            ctoken.wrap(address(this), pool.tokensSold);
+            // Wrap sold tokens to confidential tokens
+            token.approve(address(ctoken), tokensSoldValue);
+            ctoken.wrap(address(this), tokensSoldValue);
 
-            // unwrap all ceth in the contract to eth to add liquidity
-            FHE.allowTransient(pool.ethRaisedEncrypted, address(ceth));
-            ceth.withdraw(address(this), address(this), pool.ethRaisedEncrypted);
+            // send earned eth to poolOwner will be executed when add liquidity
+            // = pool.ethRaisedEncrypted * pool.options.liquidityPercentage / MAX_LIQUIDITY_PERCENTAGE
+
+            // Unwrap confidential ETH for liquidity using cached value
+            FHE.allowTransient(ethRaisedEncrypted, address(ceth));
+            ceth.withdraw(address(this), address(this), ethRaisedEncrypted);
         }
     }
 }

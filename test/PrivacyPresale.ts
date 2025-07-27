@@ -41,6 +41,7 @@ describe("PrivacyPresale integration flow", function () {
   let aliceActualPurchased: bigint;
   let bobActualPurchased: bigint;
   let charlieActualPurchased: bigint;
+  let liquidityPercentage: bigint;
 
   // Define purchase amounts as global variables for each user
   const alicePurchaseAmount = ethers.parseUnits("1", 9); // 1 ETH
@@ -78,6 +79,7 @@ describe("PrivacyPresale integration flow", function () {
     softCap = ethers.parseUnits("6", 9); // 6 ETH
     tokenPresale = ethers.parseUnits("1000000000", 18); // 1_000_000_000
     tokenAddLiquidity = ethers.parseUnits("1000000000", 18); // 1_000_000_000
+    liquidityPercentage = BigInt(5000); // 50%
     // 3. Create a new PrivacyPresale with a new token
     now = await time.latest();
     const presaleOptions = {
@@ -87,6 +89,7 @@ describe("PrivacyPresale integration flow", function () {
       softCap, // 6 ETH
       start: BigInt(now - 60), // started 1 min ago
       end: BigInt(now + 3600), // ends in 1 hour
+      liquidityPercentage,
     };
 
     tokenPerEth = tokenPresale / BigInt(10 ** 9) / hardCap;
@@ -620,8 +623,13 @@ describe("PrivacyPresale integration flow", function () {
       expect(pool.weiRaised).to.eq((aliceActualPurchased + charlieActualPurchased) * 10n ** 9n);
       expect(pool.tokensSold).to.eq(tokensSold);
 
+      // Calculate expected token refund
+      const leftOverLiquidityToken =
+        pool.options.tokenAddLiquidity - (pool.options.tokenAddLiquidity * tokensSold) / pool.options.tokenPresale;
+      const expectedRefund = pool.options.tokenPresale - pool.tokensSold + leftOverLiquidityToken;
+
       // owner token refunded
-      expect(ownerTokenBalanceAfter - ownerTokenBalanceBefore).to.eq(pool.options.tokenPresale - tokensSold);
+      expect(ownerTokenBalanceAfter - ownerTokenBalanceBefore).to.eq(expectedRefund);
     });
 
     it("Test alice claim tokens", async function () {

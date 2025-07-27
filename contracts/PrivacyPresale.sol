@@ -20,6 +20,8 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
+    uint256 constant MAX_LIQUIDITY_PERCENTAGE = 10000;
+
     /**
      * @notice Presale options
      * @param tokenDeposit Total tokens deposited for sale and liquidity.
@@ -31,6 +33,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     struct PresaleOptions {
         uint256 tokenAddLiquidity; // in token decimal
         uint256 tokenPresale; // in token decimal
+        uint256 liquidityPercentage; // max MAX_LIQUIDITY_PERCENTAGE = 100%
         uint64 hardCap;
         uint64 softCap;
         uint128 start;
@@ -171,7 +174,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
      * @return True if the pool configuration is valid.
      */
     function _prevalidatePool(PresaleOptions memory _options) internal view returns (bool) {
-        if (_options.softCap == 0 || _options.softCap < _options.hardCap / 2) revert InvalidCapValue();
+        if (_options.softCap == 0) revert InvalidCapValue();
         if (_options.start > block.timestamp || _options.end < _options.start) revert InvalidTimestampValue();
         return true;
     }
@@ -195,10 +198,32 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
             ConfidentialWETH(pool.cweth),
             pool.ctoken,
             pool.token,
-            requestID,
             ethRaised,
-            tokensSold,
-            signatures
+            tokensSold
         );
+    }
+
+    function addLiquidity() external onlyOwner {
+        require(pool.state == 4, "Invalid state");
+
+        // eth balance of pool
+        uint256 ethBalance = address(this).balance;
+
+        require(ethBalance > pool.weiRaised, "Not enough eth");
+
+        // amount send send to presale owner
+        uint256 amountSendToPresaleOwner = (pool.weiRaised * pool.options.liquidityPercentage) /
+            MAX_LIQUIDITY_PERCENTAGE;
+
+        // transfer eth to presale owner
+        payable(owner()).transfer(amountSendToPresaleOwner);
+
+        uint256 amountEthToAddLiquidity = pool.weiRaised - amountSendToPresaleOwner;
+
+        // amount token add to liquidity
+        uint256 amountTokenToAddLiquidity = (pool.options.tokenAddLiquidity * pool.tokensSold) /
+            pool.options.tokenPresale;
+
+        // TODO: add liquidity
     }
 }

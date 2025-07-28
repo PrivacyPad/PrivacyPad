@@ -121,7 +121,7 @@ library PrivacyPresaleLib {
         ConfidentialWETH ceth,
         ConfidentialTokenWrapper ctoken,
         IERC20 token,
-        uint64 ethRaised,
+        uint64 cwethRaised,
         uint64 tokensSold
     ) external {
         // Cache ALL frequently accessed storage values to minimize SLOAD operations
@@ -132,14 +132,14 @@ library PrivacyPresaleLib {
         euint64 ethRaisedEncrypted = pool.ethRaisedEncrypted;
 
         // Calculate all values once and reuse to avoid redundant calculations
-        uint256 weiRaised = ethRaised * 1e9; // Use constant instead of 10**9
+        uint256 weiRaised = cwethRaised * 1e9; // Use constant instead of 10**9
         uint256 tokensSoldValue = tokensSold * rate;
 
         // Update storage variables in batch
         pool.weiRaised = weiRaised;
         pool.tokensSold = tokensSoldValue;
 
-        if (ethRaised < softCap) {
+        if (cwethRaised < softCap) {
             // Presale failed - return tokens to owner
             pool.state = 3;
             token.safeTransfer(poolOwner, tokenPresale);

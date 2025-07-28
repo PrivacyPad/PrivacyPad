@@ -211,18 +211,15 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
 
         require(ethBalance > pool.weiRaised, "Not enough eth");
 
-        // amount send send to presale owner
-        uint256 amountSendToPresaleOwner = (pool.weiRaised * pool.options.liquidityPercentage) /
+        uint256 amountEthToAddLiquidity = (pool.weiRaised * pool.options.liquidityPercentage) /
             MAX_LIQUIDITY_PERCENTAGE;
+        uint256 amountSendToPresaleOwner = pool.weiRaised - amountEthToAddLiquidity;
 
         // transfer eth to presale owner
         payable(owner()).transfer(amountSendToPresaleOwner);
 
-        uint256 amountEthToAddLiquidity = pool.weiRaised - amountSendToPresaleOwner;
-
         // amount token add to liquidity
-        uint256 amountTokenToAddLiquidity = (pool.options.tokenAddLiquidity * pool.tokensSold) /
-            pool.options.tokenPresale;
+        uint256 amountTokenToAddLiquidity = pool.token.balanceOf(address(this));
 
         // TODO: add liquidity
     }

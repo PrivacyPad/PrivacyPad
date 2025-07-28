@@ -14,7 +14,6 @@ import { FhevmType } from "@fhevm/hardhat-plugin";
 import { IERC20, IERC20__factory } from "../types";
 
 // Constants for better maintainability
-const DUMMY_UNISWAP_ROUTER = "0x000000000000000000000000000000000000dEaD";
 const TIME_INCREASE = 7200; // 2 hours
 const PRESALE_DURATION = 3600; // 1 hour
 const PRESALE_START_OFFSET = 60; // 1 minute ago
@@ -215,7 +214,7 @@ describe("PrivacyPresale integration flow", function () {
           "contracts/PrivacyPresaleLib.sol:PrivacyPresaleLib": purchaseLibAddress,
         },
         signers.deployer,
-      ).deploy(cwethAddress, DUMMY_UNISWAP_ROUTER)
+      ).deploy(cwethAddress)
     ).waitForDeployment()) as PrivacyPresaleFactory;
 
     // Cache current time for better performance

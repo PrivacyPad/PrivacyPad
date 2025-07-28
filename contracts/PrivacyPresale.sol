@@ -7,7 +7,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IUniswapV2Router02} from "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
-import {IPrivacyPresale} from "./IPrivacyPresale.sol";
+import {IPrivacyPresale} from "./interfaces/IPrivacyPresale.sol";
 import {ConfidentialFungibleToken} from "@openzeppelin/contracts-confidential/token/ConfidentialFungibleToken.sol";
 import {TFHESafeMath} from "@openzeppelin/contracts-confidential/utils/TFHESafeMath.sol";
 import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
@@ -15,13 +15,22 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {PrivacyPresaleLib} from "./PrivacyPresaleLib.sol";
 import {ConfidentialWETH} from "./ConfidentialWETH.sol";
+import {IWETH9} from "./interfaces/IWETH9.sol";
+import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
+import {TransferHelper} from "./libraries/TransferHelper.sol";
 
 contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
     uint256 constant MAX_LIQUIDITY_PERCENTAGE = 10000;
+    // int24 constant TICK_MIN_USABLE = -887220;
+    // int24 constant TICK_MAX_USABLE = 887220;
+    // uint24 constant LP_FEE = 3000;
 
+    // IWETH9 public constant weth = IWETH9(0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14);
+    // INonfungiblePositionManager public constant posm =
+    //     INonfungiblePositionManager(0x1238536071E1c677A632429e3655c799b22cDA52);
     /**
      * @notice Presale options
      * @param tokenDeposit Total tokens deposited for sale and liquidity.
@@ -44,7 +53,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
      * @notice Presale pool
      * @param token Address of the token to sell.
      * @param ctoken Address of the confidential token to sell.
-     * @param uniswapV2Router02
+     * @param dex
      * @param tokenBalance Token balance in this contract
      * @param tokensSoldEncrypted
      * @param tokensSold
@@ -56,7 +65,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     struct Pool {
         IERC20 token;
         ConfidentialTokenWrapper ctoken;
-        IUniswapV2Router02 uniswapV2Router02;
+        address dex;
         uint256 tokenBalance;
         euint64 tokensSoldEncrypted; // in ctoken decimal
         uint256 tokensSold;
@@ -86,7 +95,6 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
      * @param _cweth Address of confidential WETH.
      * @param _token Address of the presale token.
      * @param _ctoken Address of the confidential token to sell.
-     * @param _uniswapV2Router02 Address of the Uniswap V2 router.
      * @param _options Configuration options for the presale.
      */
     constructor(
@@ -94,12 +102,10 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         address _cweth,
         address _token,
         address _ctoken,
-        address _uniswapV2Router02,
         PresaleOptions memory _options
     ) Ownable(_owner) {
         _prevalidatePool(_options);
 
-        pool.uniswapV2Router02 = IUniswapV2Router02(_uniswapV2Router02);
         pool.token = IERC20(_token);
         pool.ctoken = ConfidentialTokenWrapper(_ctoken);
         pool.cweth = _cweth;
@@ -222,5 +228,14 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         uint256 amountTokenToAddLiquidity = pool.token.balanceOf(address(this));
 
         // TODO: add liquidity
+        pool.dex = PrivacyPresaleLib.addLiquidity(
+            address(pool.token),
+            amountTokenToAddLiquidity,
+            amountEthToAddLiquidity
+        );
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
     }
 }

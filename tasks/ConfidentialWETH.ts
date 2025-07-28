@@ -48,7 +48,7 @@ function parseAmount(amountStr: string, decimals: number): bigint {
 
 /**
  * Deposit ETH to ConfidentialWETH
- * Example: npx hardhat --network localhost task:cweth-deposit --amount 5 --user 1 --cweth-address 0x...
+ * Example: npx hardhat --network sepolia task:cweth-deposit --amount 5 --user 1 --cweth 0x...
  */
 task("task:cweth-deposit", "Deposit ETH to ConfidentialWETH")
   .addParam("amount", "Amount of ETH to deposit")
@@ -65,32 +65,17 @@ task("task:cweth-deposit", "Deposit ETH to ConfidentialWETH")
 
     const user = await getSigner(hre, parseInt(taskArguments.user));
     const to = taskArguments.to || user.address;
-    const amount = parseAmount(taskArguments.amount, 9);
+    const amount = parseAmount(taskArguments.amount, 18);
 
     const cweth = await hre.ethers.getContractAt("ConfidentialWETH", taskArguments.cweth);
 
-    console.log(`Depositing ${formatAmount(amount, 9)} ETH...`);
+    console.log(`Depositing ${formatAmount(amount, 18)} ETH...`);
     console.log("From:", user.address);
     console.log("To:", to);
 
-    // Get balance before deposit
-    const balanceBefore = await cweth.balanceOf(to);
-    const clearBalanceBefore = await fhevm.userDecryptEuint(
-      FhevmType.euint64,
-      balanceBefore.toString(),
-      taskArguments.cweth,
-      user,
-    );
-
-    console.log("Balance before:", clearBalanceBefore.toString());
-
     // Deposit ETH to cWETH
-    const depositAmount = amount * 10n ** 9n; // Convert to wei
-    const tx = await cweth.connect(user).deposit(to, { value: depositAmount });
+    const tx = await cweth.connect(user).deposit(to, { value: amount });
     await tx.wait();
-
-    // Wait for FHEVM to process
-    await fhevm.awaitDecryptionOracle();
 
     // Get balance after deposit
     const balanceAfter = await cweth.balanceOf(to);
@@ -102,20 +87,20 @@ task("task:cweth-deposit", "Deposit ETH to ConfidentialWETH")
     );
 
     console.log("✅ Deposit completed successfully!");
-    console.log("Balance after:", clearBalanceAfter.toString());
-    console.log("Deposited amount:", (clearBalanceAfter - clearBalanceBefore).toString());
+    console.log("Deposited amount:", formatAmount(amount, 18));
+    console.log("Balance after:", clearBalanceAfter / BigInt(1e9));
 
     return {
       from: user.address,
       to: to,
-      depositedAmount: clearBalanceAfter - clearBalanceBefore,
+      depositedAmount: amount,
       newBalance: clearBalanceAfter,
     };
   });
 
 /**
  * Withdraw ETH from ConfidentialWETH
- * Example: npx hardhat --network localhost task:cweth-withdraw --amount 2 --user 1 --cweth-address 0x... --to 0x...
+ * Example: npx hardhat --network sepolia task:cweth-withdraw --amount 2 --user 1 --cweth 0x... --to 0x...
  */
 task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
   .addParam("amount", "Amount of cWETH to withdraw")
@@ -179,7 +164,7 @@ task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
 
 /**
  * Get ConfidentialWETH balance
- * Example: npx hardhat --network localhost task:cweth-balance --user 1 --cweth 0x...
+ * Example: npx hardhat --network sepolia task:cweth-balance --user 1 --cweth 0x...
  */
 task("task:cweth-balance", "Get ConfidentialWETH balance")
   .addParam("user", "User index (0, 1, 2, etc.)")
@@ -215,7 +200,7 @@ task("task:cweth-balance", "Get ConfidentialWETH balance")
 
 /**
  * Get ConfidentialWETH contract information
- * Example: npx hardhat --network localhost task:cweth-info --cweth-address 0x...
+ * Example: npx hardhat --network sepolia task:cweth-info --cweth 0x...
  */
 task("task:cweth-info", "Get ConfidentialWETH contract information")
   .addParam("cweth", "ConfidentialWETH contract address")

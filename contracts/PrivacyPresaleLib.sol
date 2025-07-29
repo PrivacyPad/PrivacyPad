@@ -104,7 +104,7 @@ library PrivacyPresaleLib {
         uint128 endTime = pool.options.end;
 
         require(currentState == 1, "Presale is not active");
-        require(block.timestamp >= endTime, "Presale is not ended");
+        // require(block.timestamp >= endTime, "Presale is not ended");
 
         pool.state = 2;
 

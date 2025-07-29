@@ -179,9 +179,10 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
      * @param _options The presale options.
      * @return True if the pool configuration is valid.
      */
-    function _prevalidatePool(PresaleOptions memory _options) internal view returns (bool) {
+    function _prevalidatePool(PresaleOptions memory _options) internal pure returns (bool) {
         if (_options.softCap == 0) revert InvalidCapValue();
-        if (_options.start > block.timestamp || _options.end < _options.start) revert InvalidTimestampValue();
+        if (_options.softCap > _options.hardCap) revert InvalidCapValue();
+        if (_options.end < _options.start) revert InvalidTimestampValue();
         return true;
     }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "./PrivacyPresale.sol";
+import {PrivacyPresale} from "./PrivacyPresale.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,7 +11,7 @@ import {PresaleToken} from "./PresaleToken.sol";
 contract PrivacyPresaleFactory {
     using SafeERC20 for IERC20;
     address public cweth;
-    address public uniswapV2Router02;
+    // address public uniswapV2Router02;
 
     // Array to keep track of all created presale contracts
     address[] public allPresales;
@@ -25,16 +25,16 @@ contract PrivacyPresaleFactory {
         address presale,
         address token,
         address ctoken,
-        address uniswapV2Router02,
+        // address uniswapV2Router02,
         address cweth
     );
 
-    constructor(address _cweth, address _uniswapV2Router02) {
+    constructor(address _cweth) {
         require(_cweth != address(0), "Invalid cweth address");
-        require(_uniswapV2Router02 != address(0), "Invalid uniswapV2Router02 address");
+        // require(_uniswapV2Router02 != address(0), "Invalid uniswapV2Router02 address");
 
         cweth = _cweth;
-        uniswapV2Router02 = _uniswapV2Router02;
+        // uniswapV2Router02 = _uniswapV2Router02;
     }
 
     /**
@@ -59,21 +59,14 @@ contract PrivacyPresaleFactory {
         );
 
         // Deploy new PrivacyPresale contract
-        PrivacyPresale newPresale = new PrivacyPresale(
-            msg.sender,
-            cweth,
-            _token,
-            address(ctoken),
-            uniswapV2Router02,
-            _options
-        );
+        PrivacyPresale newPresale = new PrivacyPresale(msg.sender, cweth, _token, address(ctoken), _options);
 
         // Store the address
         allPresales.push(address(newPresale));
         presalesByCreator[msg.sender].push(address(newPresale));
 
         // Emit event
-        emit PrivacyPresaleCreated(msg.sender, address(newPresale), _token, address(ctoken), uniswapV2Router02, cweth);
+        emit PrivacyPresaleCreated(msg.sender, address(newPresale), _token, address(ctoken), cweth);
 
         return address(newPresale);
     }
@@ -102,14 +95,7 @@ contract PrivacyPresaleFactory {
         );
 
         // Deploy new PrivacyPresale contract
-        PrivacyPresale newPresale = new PrivacyPresale(
-            msg.sender,
-            cweth,
-            address(newToken),
-            address(ctoken),
-            uniswapV2Router02,
-            _options
-        );
+        PrivacyPresale newPresale = new PrivacyPresale(msg.sender, cweth, address(newToken), address(ctoken), _options);
 
         // transfer token to presale contract
         newToken.transfer(address(newPresale), _options.tokenAddLiquidity + _options.tokenPresale);
@@ -124,7 +110,7 @@ contract PrivacyPresaleFactory {
             address(newPresale),
             address(newToken),
             address(ctoken),
-            uniswapV2Router02,
+            // uniswapV2Router02,
             cweth
         );
 

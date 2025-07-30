@@ -7,7 +7,6 @@ import { HardhatRuntimeEnvironment } from "hardhat/types";
 // For local testing, deploy or use mock contracts and paste their addresses here.
 // =============================
 const CWETH_ADDRESS = "0x1A7258dFA114fc3Daf2849F131aF022E3Ec90eEe"; // e.g., "0x..."
-const UNISWAP_V2_ROUTER02_ADDRESS = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
 
 const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
@@ -16,19 +15,16 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   // Log deployer address for reference
   console.log("Deployer address:", deployer);
 
-  // Deploy PrivacyPresaleFinalizeLib contract
-  const finalizeLib = await deploy("PrivacyPresaleFinalizeLib", { from: deployer, log: true });
-  // Deploy PrivacyPresalePurchaseLib contract
-  const purchaseLib = await deploy("PrivacyPresalePurchaseLib", { from: deployer, log: true });
+  // Deploy lin contract
+  const lib = await deploy("PrivacyPresaleLib", { from: deployer, log: true });
 
   // Deploy PrivacyPresaleFactory contract
   const factory = await deploy("PrivacyPresaleFactory", {
     from: deployer,
     log: true,
-    args: [CWETH_ADDRESS, UNISWAP_V2_ROUTER02_ADDRESS],
+    args: [CWETH_ADDRESS],
     libraries: {
-      PrivacyPresaleFinalizeLib: finalizeLib.address,
-      PrivacyPresalePurchaseLib: purchaseLib.address,
+      PrivacyPresaleLib: lib.address,
     },
   });
 

@@ -10,7 +10,6 @@ import {IERC1363Receiver} from "@openzeppelin/contracts/interfaces/IERC1363Recei
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ConfidentialFungibleToken} from "@openzeppelin/contracts-confidential/token/ConfidentialFungibleToken.sol";
-import "hardhat/console.sol";
 
 contract ConfidentialWETH is ConfidentialFungibleToken, SepoliaConfig {
     uint8 private immutable _decimals;

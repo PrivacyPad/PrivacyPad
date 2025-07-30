@@ -13,9 +13,6 @@ import {
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { IERC20, IERC20__factory } from "../types";
 
-// Dummy Uniswap router address for local test
-const DUMMY_UNISWAP_ROUTER = "0x000000000000000000000000000000000000dEaD";
-
 type Signers = {
   deployer: HardhatEthersSigner;
   alice: HardhatEthersSigner;
@@ -72,7 +69,7 @@ describe("PrivacyPresale integration flow", function () {
           "contracts/PrivacyPresaleLib.sol:PrivacyPresaleLib": purchaseLibAddress,
         },
         signers.deployer,
-      ).deploy(await cweth.getAddress(), DUMMY_UNISWAP_ROUTER)
+      ).deploy(await cweth.getAddress())
     ).waitForDeployment()) as PrivacyPresaleFactory;
 
     hardCap = ethers.parseUnits("10", 9); // 10 ETH

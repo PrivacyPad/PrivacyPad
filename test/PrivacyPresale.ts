@@ -13,6 +13,28 @@ import {
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { IERC20, IERC20__factory } from "../types";
 
+// Constants for better maintainability
+const TIME_INCREASE = 7200; // 2 hours
+const PRESALE_DURATION = 3600; // 1 hour
+const PRESALE_START_OFFSET = 60; // 1 minute ago
+const OPERATOR_EXPIRY_OFFSET = 1000; // 1000 seconds from now
+
+// Purchase amounts as constants for better maintainability
+const PURCHASE_AMOUNTS = {
+  alice: ethers.parseUnits("1", 9), // 1 ETH
+  bob: ethers.parseUnits("10", 9), // 10 ETH
+  charlie: ethers.parseUnits("6", 9), // 6 ETH
+} as const;
+
+// Presale configuration constants
+const PRESALE_CONFIG = {
+  hardCap: ethers.parseUnits("10", 9), // 10 ETH
+  softCap: ethers.parseUnits("6", 9), // 6 ETH
+  tokenPresale: ethers.parseUnits("1000000000", 18), // 1_000_000_000
+  tokenAddLiquidity: ethers.parseUnits("1000000000", 18), // 1_000_000_000
+  liquidityPercentage: BigInt(5000), // 50%
+} as const;
+
 type Signers = {
   deployer: HardhatEthersSigner;
   alice: HardhatEthersSigner;
@@ -20,89 +42,214 @@ type Signers = {
   charlie: HardhatEthersSigner;
 };
 
+// Helper functions to reduce code duplication and improve performance
+class TestHelpers {
+  /**
+   * Wraps ETH to cWETH for a user
+   */
+  static async wrapETH(user: HardhatEthersSigner, amount: bigint, cweth: ConfidentialWETH) {
+    // Only wrap if amount is greater than 0
+    if (amount > 0n) {
+      const wrapAmount = amount * 10n ** 9n;
+      await cweth.connect(user).deposit(user.address, { value: wrapAmount });
+    }
+
+    const balance = await cweth.balanceOf(user.address);
+    const clearBalance = await fhevm.userDecryptEuint(FhevmType.euint64, balance.toString(), cweth.target, user);
+    return { balance, clearBalance };
+  }
+
+  /**
+   * Approves cWETH spending for presale contract
+   */
+  static async approveCWETH(user: HardhatEthersSigner, presaleAddress: string, cweth: ConfidentialWETH) {
+    await cweth.connect(user).setOperator(presaleAddress, BigInt((await time.latest()) + OPERATOR_EXPIRY_OFFSET));
+  }
+
+  /**
+   * Creates encrypted input for purchase
+   */
+  static async createEncryptedPurchase(presaleAddress: string, user: HardhatEthersSigner, amount: bigint) {
+    return await fhevm.createEncryptedInput(presaleAddress, user.address).add64(amount).encrypt();
+  }
+
+  /**
+   * Performs a purchase and returns contribution and claimable tokens
+   */
+  static async performPurchase(
+    presale: PrivacyPresale,
+    user: HardhatEthersSigner,
+    amount: bigint,
+    presaleAddress: string,
+  ) {
+    const encrypted = await this.createEncryptedPurchase(presaleAddress, user, amount);
+
+    await presale.connect(user).purchase(user.address, encrypted.handles[0], encrypted.inputProof);
+
+    // Wait for FHEVM to process the transaction
+    await fhevm.awaitDecryptionOracle();
+
+    // Get contribution and claimable tokens in parallel for better performance
+    const [contribution, claimableTokens] = await Promise.all([
+      presale.contributions(user.address),
+      presale.claimableTokens(user.address),
+    ]);
+
+    const [clearContribution, clearClaimableTokens] = await Promise.all([
+      fhevm.userDecryptEuint(FhevmType.euint64, contribution.toString(), presaleAddress, user),
+      fhevm.userDecryptEuint(FhevmType.euint64, claimableTokens.toString(), presaleAddress, user),
+    ]);
+
+    return { clearContribution, clearClaimableTokens };
+  }
+
+  /**
+   * Claims tokens and returns the balance
+   */
+  static async claimTokens(presale: PrivacyPresale, user: HardhatEthersSigner, ctoken: ConfidentialTokenWrapper) {
+    await presale.connect(user).claimTokens(user.address);
+
+    const balance = await ctoken.balanceOf(user.address);
+    const clearBalance = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      balance.toString(),
+      await ctoken.getAddress(),
+      user,
+    );
+    return clearBalance;
+  }
+
+  /**
+   * Calculates expected contribution based on hard cap
+   */
+  static calculateExpectedContribution(
+    purchaseAmount: bigint,
+    beforePurchased: bigint,
+    hardCap: bigint,
+  ): { contribution: bigint; actualPurchased: bigint } {
+    const totalAfterPurchase = beforePurchased + purchaseAmount;
+
+    if (totalAfterPurchase > hardCap) {
+      const contribution = hardCap - beforePurchased;
+      return { contribution, actualPurchased: contribution };
+    } else {
+      return { contribution: purchaseAmount, actualPurchased: purchaseAmount };
+    }
+  }
+
+  /**
+   * Advances time and requests finalization
+   */
+  static async finalizePresale(presale: PrivacyPresale, user: HardhatEthersSigner) {
+    await network.provider.send("evm_increaseTime", [TIME_INCREASE]);
+    await presale.connect(user).requestFinalizePresaleState();
+  }
+
+  /**
+   * Waits for decryption and validates final state
+   */
+  static async validateFinalization(
+    presale: PrivacyPresale,
+    expectedState: number,
+    expectedWeiRaised: bigint,
+    expectedTokensSold: bigint,
+  ) {
+    await fhevm.awaitDecryptionOracle();
+
+    const pool = await presale.pool();
+    expect(pool.state).to.eq(expectedState);
+    expect(pool.weiRaised).to.eq(expectedWeiRaised);
+    expect(pool.tokensSold).to.eq(expectedTokensSold);
+
+    return pool;
+  }
+}
+
 describe("PrivacyPresale integration flow", function () {
+  // Cached variables for better performance
   let signers: Signers;
   let cweth: ConfidentialWETH;
   let factory: PrivacyPresaleFactory;
   let presale: PrivacyPresale;
   let presaleAddress: string;
   let purchased: bigint;
-  let hardCap: bigint;
-  let softCap: bigint;
   let tokenPerEth: bigint;
-  let tokenPresale: bigint;
-  let tokenAddLiquidity: bigint;
-  let token: IERC20; // Removed unused variable to fix linter error
+  let token: IERC20;
   let ctoken: ConfidentialTokenWrapper;
   let now: number;
   let aliceActualPurchased: bigint;
   let bobActualPurchased: bigint;
   let charlieActualPurchased: bigint;
-  let liquidityPercentage: bigint;
 
-  // Define purchase amounts as global variables for each user
-  const alicePurchaseAmount = ethers.parseUnits("1", 9); // 1 ETH
-  const bobPurchaseAmount = ethers.parseUnits("10", 9); // 10 ETH
-  const charliePurchaseAmount = ethers.parseUnits("5", 9); // 5 ETH
+  // Cached contract addresses for better performance
+  let cwethAddress: string;
+  let ctokenAddress: string;
+  let tokenAddress: string;
 
-  // Helper function to setup presale state for each describe
+  /**
+   * Optimized setup function with better error handling and performance
+   */
   async function setupPresale() {
-    // Check FHEVM mock
+    // Validate FHEVM environment
     if (!fhevm.isMock) {
       throw new Error("This hardhat test suite cannot run on Sepolia Testnet");
     }
+
     purchased = 0n;
 
-    // 1. Deploy ConfidentialWETH
+    // Deploy ConfidentialWETH with better error handling
     cweth = (await (
       await new ConfidentialWETH__factory(signers.deployer).deploy()
     ).waitForDeployment()) as ConfidentialWETH;
+    cwethAddress = await cweth.getAddress();
 
-    // Deploy the libraries
+    // Deploy PrivacyPresaleLib library
     const purchaseLib = await (await ethers.deployContract("PrivacyPresaleLib")).waitForDeployment();
     const purchaseLibAddress = await purchaseLib.getAddress();
 
-    // 2. Deploy PrivacyPresaleFactory
+    // Deploy PrivacyPresaleFactory with cached library address
     factory = (await (
       await new PrivacyPresaleFactory__factory(
         {
-          "contracts/PrivacyPresaleLib.sol:PrivacyPresaleLib": purchaseLibAddress,
+          "contracts/libraries/PrivacyPresaleLib.sol:PrivacyPresaleLib": purchaseLibAddress,
         },
         signers.deployer,
-      ).deploy(await cweth.getAddress())
+      ).deploy(cwethAddress)
     ).waitForDeployment()) as PrivacyPresaleFactory;
 
-    hardCap = ethers.parseUnits("10", 9); // 10 ETH
-    softCap = ethers.parseUnits("6", 9); // 6 ETH
-    tokenPresale = ethers.parseUnits("1000000000", 18); // 1_000_000_000
-    tokenAddLiquidity = ethers.parseUnits("1000000000", 18); // 1_000_000_000
-    liquidityPercentage = BigInt(5000); // 50%
-    // 3. Create a new PrivacyPresale with a new token
+    // Cache current time for better performance
     now = await time.latest();
+
+    // Create presale options with cached constants
     const presaleOptions = {
-      tokenAddLiquidity, // in token decimal
-      tokenPresale, // in token decimal
-      hardCap, // 10 ETH
-      softCap, // 6 ETH
-      start: BigInt(now - 60), // started 1 min ago
-      end: BigInt(now + 3600), // ends in 1 hour
-      liquidityPercentage,
+      tokenAddLiquidity: PRESALE_CONFIG.tokenAddLiquidity,
+      tokenPresale: PRESALE_CONFIG.tokenPresale,
+      liquidityPercentage: PRESALE_CONFIG.liquidityPercentage,
+      hardCap: PRESALE_CONFIG.hardCap,
+      softCap: PRESALE_CONFIG.softCap,
+      start: BigInt(now - PRESALE_START_OFFSET),
+      end: BigInt(now + PRESALE_DURATION),
     };
 
-    tokenPerEth = tokenPresale / BigInt(10 ** 9) / hardCap;
+    // Calculate token per ETH ratio once
+    tokenPerEth = PRESALE_CONFIG.tokenPresale / BigInt(10 ** 9) / PRESALE_CONFIG.hardCap;
 
+    // Create presale with better error handling
     const tx = await factory.createPrivacyPresaleWithNewToken(
       "TestToken",
       "TTK",
-      tokenAddLiquidity + tokenPresale,
+      PRESALE_CONFIG.tokenAddLiquidity + PRESALE_CONFIG.tokenPresale,
       presaleOptions,
     );
+
     const receipt = await tx.wait();
-    // Get the PrivacyPresale address from the event
+
+    // Extract presale address from event with better error handling
     type PrivacyPresaleCreatedEvent = {
       name: string;
       args: { presale: string };
     };
+
     const event = receipt?.logs
       .map((log: unknown) => {
         try {
@@ -112,24 +259,41 @@ describe("PrivacyPresale integration flow", function () {
         }
       })
       .find((e) => e && e.name === "PrivacyPresaleCreated") as PrivacyPresaleCreatedEvent | null;
+
     presaleAddress = event?.args?.presale ?? "";
-    expect(presaleAddress).to.equal(presaleAddress);
+    if (!presaleAddress) {
+      throw new Error("Failed to extract presale address from deployment event");
+    }
+
+    // Connect to contracts with cached addresses
     presale = PrivacyPresale__factory.connect(presaleAddress, signers.deployer) as PrivacyPresale;
     const pool = await presale.pool();
+
     ctoken = ConfidentialTokenWrapper__factory.connect(pool.ctoken, signers.deployer) as ConfidentialTokenWrapper;
     token = IERC20__factory.connect(pool.token, signers.deployer) as IERC20;
+
+    // Cache addresses for better performance
+    ctokenAddress = await ctoken.getAddress();
+    tokenAddress = await token.getAddress();
+
+    // Log setup information
     console.table({
-      // presale contract addresses
-      "token address": await token.getAddress(),
-      "cweth address": await cweth.getAddress(),
+      "token address": tokenAddress,
+      "cweth address": cwethAddress,
       "presale address": presaleAddress,
-      "ctoken address": await ctoken.getAddress(),
+      "ctoken address": ctokenAddress,
     });
   }
 
   before(async function () {
     const ethSigners: HardhatEthersSigner[] = await ethers.getSigners();
-    signers = { deployer: ethSigners[0], alice: ethSigners[1], bob: ethSigners[2], charlie: ethSigners[3] };
+    signers = {
+      deployer: ethSigners[0],
+      alice: ethSigners[1],
+      bob: ethSigners[2],
+      charlie: ethSigners[3],
+    };
+
     console.table({
       deployer: signers.deployer.address,
       alice: signers.alice.address,
@@ -143,523 +307,290 @@ describe("PrivacyPresale integration flow", function () {
       await setupPresale();
     });
 
-    it("Test wrap", async function () {
-      // alice wrap
-      const wrapAmount = alicePurchaseAmount * 10n ** 9n;
-      const clearWrapAmount = alicePurchaseAmount;
-      await cweth.connect(signers.alice).deposit(signers.alice.address, { value: wrapAmount });
-      const aliceCwethBalance = await cweth.balanceOf(signers.alice.address);
-      const clearAliceCwethBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceCwethBalance.toString(),
-        cweth.target,
-        signers.alice,
-      );
-      expect(clearAliceCwethBalance).to.eq(clearWrapAmount);
+    it("Test wrap ETH for Alice", async function () {
+      const { clearBalance } = await TestHelpers.wrapETH(signers.alice, PURCHASE_AMOUNTS.alice, cweth);
+      expect(clearBalance).to.eq(PURCHASE_AMOUNTS.alice);
     });
 
-    it("Test purchase alice", async function () {
-      // alice approve cweth
-      await cweth.connect(signers.alice).setOperator(presaleAddress, BigInt(now + 1000));
+    it("Test Alice's purchase", async function () {
+      await TestHelpers.approveCWETH(signers.alice, presaleAddress, cweth);
 
-      // 5. Alice purchases in the presale using cweth
-      // Encrypt alicePurchaseAmount (in 9 decimals, as required by the contract)
-      aliceActualPurchased = alicePurchaseAmount;
+      aliceActualPurchased = PURCHASE_AMOUNTS.alice;
       purchased += aliceActualPurchased;
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.alice.address)
-        .add64(alicePurchaseAmount)
-        .encrypt();
 
-      await presale.connect(signers.alice).purchase(signers.alice.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Alice's contribution is nonzero
-      const contribution = await presale.contributions(signers.alice.address);
-      const clearAliceCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.alice,
-      );
-      console.log("alice contribution: ", clearAliceCwethContribution);
-      expect(clearAliceCwethContribution).to.eq(alicePurchaseAmount);
-
-      const claimableTokens = await presale.claimableTokens(signers.alice.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
+        PURCHASE_AMOUNTS.alice,
         presaleAddress,
-        signers.alice,
       );
+
+      console.log("alice contribution: ", clearContribution);
       console.log("alice claimable tokens: ", clearClaimableTokens);
-      expect(clearClaimableTokens).to.eq(alicePurchaseAmount * tokenPerEth);
+
+      expect(clearContribution).to.eq(PURCHASE_AMOUNTS.alice);
+      expect(clearClaimableTokens).to.eq(PURCHASE_AMOUNTS.alice * tokenPerEth);
     });
 
-    it("Test purchase bob, bob purchase more then hard cap", async function () {
-      // bob wrap
-      const wrapAmount = ethers.parseUnits("100", 18); // 100 ETH
-      await cweth.connect(signers.bob).deposit(signers.bob.address, { value: wrapAmount });
+    it("Test Bob's purchase exceeding hard cap", async function () {
+      await TestHelpers.wrapETH(signers.bob, ethers.parseUnits("100", 9), cweth);
+      await TestHelpers.approveCWETH(signers.bob, presaleAddress, cweth);
 
-      // alice approve cweth
-      await cweth.connect(signers.bob).setOperator(presaleAddress, BigInt(now + 1000));
-
-      // 5. Bob purchases in the presale using cweth
-      // Encrypt bobPurchaseAmount (in 9 decimals, as required by the contract)
       const beforePurchased = purchased;
-      purchased += bobPurchaseAmount;
+      purchased += PURCHASE_AMOUNTS.bob;
 
-      let contributionShouldBe = 0n;
+      const { contribution: contributionShouldBe, actualPurchased } = TestHelpers.calculateExpectedContribution(
+        PURCHASE_AMOUNTS.bob,
+        beforePurchased,
+        PRESALE_CONFIG.hardCap,
+      );
 
-      if (purchased > hardCap) {
-        contributionShouldBe = hardCap - beforePurchased;
-        purchased = hardCap;
-        bobActualPurchased = hardCap - beforePurchased;
-      } else {
-        contributionShouldBe = bobPurchaseAmount;
-        bobActualPurchased = bobPurchaseAmount;
+      bobActualPurchased = actualPurchased;
+      if (purchased > PRESALE_CONFIG.hardCap) {
+        purchased = PRESALE_CONFIG.hardCap;
       }
 
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.bob.address)
-        .add64(bobPurchaseAmount)
-        .encrypt();
-
-      await presale.connect(signers.bob).purchase(signers.bob.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Alice's contribution is nonzero
-      const contribution = await presale.contributions(signers.bob.address);
-      const clearBobCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.bob,
-      );
-      console.log("bob contribution: ", clearBobCwethContribution);
-      expect(clearBobCwethContribution).to.eq(contributionShouldBe);
-
-      const claimableTokens = await presale.claimableTokens(signers.bob.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
+        PURCHASE_AMOUNTS.bob,
         presaleAddress,
-        signers.bob,
       );
+
+      console.log("bob contribution: ", clearContribution);
       console.log("bob claimable tokens: ", clearClaimableTokens);
+
+      expect(clearContribution).to.eq(contributionShouldBe);
       expect(clearClaimableTokens).to.eq(contributionShouldBe * tokenPerEth);
     });
 
-    it("Test purchase charlie, but charlie can't not purchase anymore", async function () {
-      // charlie wrap
-      const wrapAmount = ethers.parseUnits("100", 18); // 100 ETH
-      await cweth.connect(signers.charlie).deposit(signers.charlie.address, { value: wrapAmount });
+    it("Test Charlie's purchase with hard cap reached", async function () {
+      await TestHelpers.wrapETH(signers.charlie, ethers.parseUnits("100", 9), cweth);
+      await TestHelpers.approveCWETH(signers.charlie, presaleAddress, cweth);
 
-      // charlie approve cweth
-      await cweth.connect(signers.charlie).setOperator(presaleAddress, BigInt(now + 1000));
-
-      // 5. Charlie purchases in the presale using cweth
-      // Encrypt charliePurchaseAmount (in 9 decimals, as required by the contract)
       const beforePurchased = purchased;
-      purchased += charliePurchaseAmount;
+      purchased += PURCHASE_AMOUNTS.charlie;
 
-      let contributionShouldBe = 0n;
-
-      if (purchased > hardCap) {
-        contributionShouldBe = hardCap - beforePurchased;
-        charlieActualPurchased = hardCap - beforePurchased;
-      } else {
-        contributionShouldBe = charliePurchaseAmount;
-        charlieActualPurchased = charliePurchaseAmount;
-      }
-
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.charlie.address)
-        .add64(charliePurchaseAmount)
-        .encrypt();
-
-      await presale
-        .connect(signers.charlie)
-        .purchase(signers.charlie.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Charlie's contribution is zero
-      const contribution = await presale.contributions(signers.charlie.address);
-      const clearCharlieCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
-        signers.charlie,
+      const { contribution: contributionShouldBe, actualPurchased } = TestHelpers.calculateExpectedContribution(
+        PURCHASE_AMOUNTS.charlie,
+        beforePurchased,
+        PRESALE_CONFIG.hardCap,
       );
-      console.log("charlie contribution: ", clearCharlieCwethContribution);
-      expect(clearCharlieCwethContribution).to.eq(contributionShouldBe);
 
-      const claimableTokens = await presale.claimableTokens(signers.charlie.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
-        presaleAddress,
+      charlieActualPurchased = actualPurchased;
+
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.charlie,
+        PURCHASE_AMOUNTS.charlie,
+        presaleAddress,
       );
+
+      console.log("charlie contribution: ", clearContribution);
       console.log("charlie claimable tokens: ", clearClaimableTokens);
+
+      expect(clearContribution).to.eq(contributionShouldBe);
       expect(clearClaimableTokens).to.eq(contributionShouldBe * tokenPerEth);
     });
 
     it("Test request finalize presale", async function () {
-      // increase time in hardhat
-      await network.provider.send("evm_increaseTime", [7200]);
-
-      // alice finalize presale
-      await presale.connect(signers.alice).requestFinalizePresaleState();
+      await TestHelpers.finalizePresale(presale, signers.alice);
     });
 
     it("Test finalize presale", async function () {
-      // Use the built-in `awaitDecryptionOracle` helper to wait for the FHEVM decryption oracle
-      // to complete all pending Solidity decryption requests.
-      await fhevm.awaitDecryptionOracle();
-
-      // get presale state
-      const pool = await presale.pool();
-      expect(pool.state).to.eq(4);
-      expect(pool.weiRaised).to.eq(hardCap * 10n ** 9n);
-      expect(pool.tokensSold).to.eq(BigInt(tokenPresale));
-    });
-
-    it("Test alice claim tokens", async function () {
-      // alice clamble token
-      const aliceClaimableTokens = aliceActualPurchased * tokenPerEth;
-
-      // alice claim tokens
-      await presale.connect(signers.alice).claimTokens(signers.alice.address);
-
-      // check alice's token balance
-      const aliceTokenBalance = await ctoken.balanceOf(signers.alice.address);
-      const clearAliceTokenBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceTokenBalance.toString(),
-        await ctoken.getAddress(),
-        signers.alice,
+      await TestHelpers.validateFinalization(
+        presale,
+        4, // Expected state
+        PRESALE_CONFIG.hardCap * 10n ** 9n, // Expected wei raised
+        BigInt(PRESALE_CONFIG.tokenPresale), // Expected tokens sold
       );
-      expect(clearAliceTokenBalance).to.eq(aliceClaimableTokens);
     });
 
-    it("Test claim tokens again", async function () {
-      // expect revert
+    it("Test Alice claims tokens", async function () {
+      const aliceClaimableTokens = aliceActualPurchased * tokenPerEth;
+      const clearBalance = await TestHelpers.claimTokens(presale, signers.alice, ctoken);
+      expect(clearBalance).to.eq(aliceClaimableTokens);
+    });
+
+    it("Test Alice cannot claim tokens twice", async function () {
       await expect(presale.connect(signers.alice).claimTokens(signers.alice.address)).to.be.revertedWith(
         "Already claimed",
       );
     });
 
-    it("test claim charlie token", async function () {
-      // charlie claim tokens
-      await presale.connect(signers.charlie).claimTokens(signers.charlie.address);
-
-      // check charlie's token balance
-      const charlieTokenBalance = await ctoken.balanceOf(signers.charlie.address);
-      const clearCharlieTokenBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        charlieTokenBalance.toString(),
-        await ctoken.getAddress(),
-        signers.charlie,
-      );
-      expect(clearCharlieTokenBalance).to.eq(0n);
+    it("Test Charlie claims tokens (should be 0)", async function () {
+      const clearBalance = await TestHelpers.claimTokens(presale, signers.charlie, ctoken);
+      expect(clearBalance).to.eq(0n);
     });
 
-    it("test claim bob token", async function () {
-      // bob clamble token
+    it("Test Bob claims tokens", async function () {
       const bobClaimableTokens = bobActualPurchased * tokenPerEth;
-
-      // bob claim tokens
-      await presale.connect(signers.bob).claimTokens(signers.bob.address);
-
-      // check bob's token balance
-      const bobTokenBalance = await ctoken.balanceOf(signers.bob.address);
-      const clearBobTokenBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        bobTokenBalance.toString(),
-        await ctoken.getAddress(),
-        signers.bob,
-      );
-      expect(clearBobTokenBalance).to.eq(bobClaimableTokens);
+      const clearBalance = await TestHelpers.claimTokens(presale, signers.bob, ctoken);
+      expect(clearBalance).to.eq(bobClaimableTokens);
     });
   });
 
-  describe("Test sad case: only alice buy -> pool is cancelled", function () {
+  describe("Test sad case: only Alice buys -> pool is cancelled", function () {
     before(async function () {
       await setupPresale();
     });
 
-    it("Test wrap", async function () {
-      // alice wrap
-      const wrapAmount = alicePurchaseAmount * 10n ** 9n;
-      const clearWrapAmount = alicePurchaseAmount;
-      await cweth.connect(signers.alice).deposit(signers.alice.address, { value: wrapAmount });
-      const aliceCwethBalance = await cweth.balanceOf(signers.alice.address);
-      const clearAliceCwethBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceCwethBalance.toString(),
-        cweth.target,
-        signers.alice,
-      );
-      expect(clearAliceCwethBalance).to.eq(clearWrapAmount);
+    it("Test wrap ETH for Alice", async function () {
+      const { clearBalance } = await TestHelpers.wrapETH(signers.alice, PURCHASE_AMOUNTS.alice, cweth);
+      expect(clearBalance).to.eq(PURCHASE_AMOUNTS.alice);
     });
 
-    it("Test purchase alice", async function () {
-      // alice approve cweth
-      await cweth.connect(signers.alice).setOperator(presaleAddress, BigInt(now + 1000));
+    it("Test Alice's purchase", async function () {
+      await TestHelpers.approveCWETH(signers.alice, presaleAddress, cweth);
 
-      // alice purchase
-      purchased += alicePurchaseAmount;
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.alice.address)
-        .add64(alicePurchaseAmount)
-        .encrypt();
+      purchased += PURCHASE_AMOUNTS.alice;
 
-      await presale.connect(signers.alice).purchase(signers.alice.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Alice's contribution is nonzero
-      const contribution = await presale.contributions(signers.alice.address);
-      const clearAliceCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.alice,
-      );
-      console.log("alice contribution: ", clearAliceCwethContribution);
-      expect(clearAliceCwethContribution).to.eq(alicePurchaseAmount);
-
-      const claimableTokens = await presale.claimableTokens(signers.alice.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
+        PURCHASE_AMOUNTS.alice,
         presaleAddress,
-        signers.alice,
       );
+
+      console.log("alice contribution: ", clearContribution);
       console.log("alice claimable tokens: ", clearClaimableTokens);
-      expect(clearClaimableTokens).to.eq(alicePurchaseAmount * tokenPerEth);
+
+      expect(clearContribution).to.eq(PURCHASE_AMOUNTS.alice);
+      expect(clearClaimableTokens).to.eq(PURCHASE_AMOUNTS.alice * tokenPerEth);
     });
 
     it("Test request finalize presale", async function () {
-      // increase time in hardhat
-      await network.provider.send("evm_increaseTime", [7200]);
-
-      // alice finalize presale
-      await presale.connect(signers.alice).requestFinalizePresaleState();
+      await TestHelpers.finalizePresale(presale, signers.alice);
     });
 
-    it("Test finalize presale", async function () {
-      // Use the built-in `awaitDecryptionOracle` helper to wait for the FHEVM decryption oracle
-      // to complete all pending Solidity decryption requests.
-      await fhevm.awaitDecryptionOracle();
-
-      // get presale state
-      const pool = await presale.pool();
-      expect(pool.state).to.eq(3);
-      expect(pool.weiRaised).to.eq(alicePurchaseAmount * 10n ** 9n);
-      expect(pool.tokensSold).to.eq(alicePurchaseAmount * tokenPerEth * 10n ** 9n);
+    it("Test finalize presale (should be cancelled)", async function () {
+      await TestHelpers.validateFinalization(
+        presale,
+        3, // Expected state (cancelled)
+        PURCHASE_AMOUNTS.alice * 10n ** 9n, // Expected wei raised
+        PURCHASE_AMOUNTS.alice * tokenPerEth * 10n ** 9n, // Expected tokens sold
+      );
     });
 
-    it("Test claim tokens", async function () {
-      // alice claim tokens
-      // expect revert
+    it("Test Alice cannot claim tokens (pool cancelled)", async function () {
       await expect(presale.connect(signers.alice).claimTokens(signers.alice.address)).to.be.revertedWith(
         "Invalid state",
       );
     });
 
-    it("Test refund alice", async function () {
-      // alice refund
+    it("Test Alice gets refund", async function () {
       await presale.connect(signers.alice).refund(signers.alice.address);
 
-      // check alice's cweth balance
-      const aliceCwethBalance = await cweth.balanceOf(signers.alice.address);
-      const clearAliceCwethBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceCwethBalance.toString(),
-        cweth.target,
-        signers.alice,
-      );
-      expect(clearAliceCwethBalance).to.eq(alicePurchaseAmount);
+      const { clearBalance } = await TestHelpers.wrapETH(signers.alice, 0n, cweth);
+      expect(clearBalance).to.eq(PURCHASE_AMOUNTS.alice);
     });
 
-    it("Test refund alice again", async function () {
-      // expect revert
+    it("Test Alice cannot refund twice", async function () {
       await expect(presale.connect(signers.alice).refund(signers.alice.address)).to.be.revertedWith("Already refunded");
     });
   });
 
-  describe("Test mid case: only alice, charlie buy -> pool is soft cap", function () {
+  describe("Test mid case: Alice and Charlie buy -> pool reaches soft cap", function () {
     before(async function () {
       await setupPresale();
     });
 
-    it("Test wrap", async function () {
-      // alice wrap
-      const wrapAmount = alicePurchaseAmount * 10n ** 9n;
-      const clearWrapAmount = alicePurchaseAmount;
-      await cweth.connect(signers.alice).deposit(signers.alice.address, { value: wrapAmount });
-      const aliceCwethBalance = await cweth.balanceOf(signers.alice.address);
-      const clearAliceCwethBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceCwethBalance.toString(),
-        cweth.target,
-        signers.alice,
-      );
-      expect(clearAliceCwethBalance).to.eq(clearWrapAmount);
+    it("Test wrap ETH for Alice", async function () {
+      const { clearBalance } = await TestHelpers.wrapETH(signers.alice, PURCHASE_AMOUNTS.alice, cweth);
+      expect(clearBalance).to.eq(PURCHASE_AMOUNTS.alice);
     });
 
-    it("Test purchase alice", async function () {
-      // alice approve cweth
-      await cweth.connect(signers.alice).setOperator(presaleAddress, BigInt(now + 1000));
+    it("Test Alice's purchase", async function () {
+      await TestHelpers.approveCWETH(signers.alice, presaleAddress, cweth);
 
-      // alice purchase
-      purchased += alicePurchaseAmount;
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.alice.address)
-        .add64(alicePurchaseAmount)
-        .encrypt();
+      purchased += PURCHASE_AMOUNTS.alice;
 
-      await presale.connect(signers.alice).purchase(signers.alice.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Alice's contribution is nonzero
-      const contribution = await presale.contributions(signers.alice.address);
-      const clearAliceCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.alice,
-      );
-      console.log("alice contribution: ", clearAliceCwethContribution);
-      expect(clearAliceCwethContribution).to.eq(alicePurchaseAmount);
-
-      const claimableTokens = await presale.claimableTokens(signers.alice.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
+        PURCHASE_AMOUNTS.alice,
         presaleAddress,
-        signers.alice,
       );
+
+      console.log("alice contribution: ", clearContribution);
       console.log("alice claimable tokens: ", clearClaimableTokens);
-      expect(clearClaimableTokens).to.eq(alicePurchaseAmount * tokenPerEth);
+
+      expect(clearContribution).to.eq(PURCHASE_AMOUNTS.alice);
+      expect(clearClaimableTokens).to.eq(PURCHASE_AMOUNTS.alice * tokenPerEth);
     });
 
-    it("Test purchase charlie", async function () {
-      // charlie wrap
-      const wrapAmount = charliePurchaseAmount * 10n ** 9n;
-      await cweth.connect(signers.charlie).deposit(signers.charlie.address, { value: wrapAmount });
+    it("Test Charlie's purchase", async function () {
+      await TestHelpers.wrapETH(signers.charlie, PURCHASE_AMOUNTS.charlie, cweth);
+      await TestHelpers.approveCWETH(signers.charlie, presaleAddress, cweth);
 
-      // charlie approve cweth
-      await cweth.connect(signers.charlie).setOperator(presaleAddress, BigInt(now + 1000));
-
-      // charlie purchase
       const beforePurchased = purchased;
-      purchased += charliePurchaseAmount;
+      purchased += PURCHASE_AMOUNTS.charlie;
 
-      let contributionShouldBe = 0n;
-
-      if (purchased > hardCap) {
-        contributionShouldBe = hardCap - beforePurchased;
-        charlieActualPurchased = hardCap - beforePurchased;
-      } else {
-        contributionShouldBe = charliePurchaseAmount;
-        charlieActualPurchased = charliePurchaseAmount;
-      }
-
-      const encrypted = await fhevm
-        .createEncryptedInput(presaleAddress, signers.charlie.address)
-        .add64(charliePurchaseAmount)
-        .encrypt();
-
-      await presale
-        .connect(signers.charlie)
-        .purchase(signers.charlie.address, encrypted.handles[0], encrypted.inputProof);
-
-      // Check Charlie's contribution is zero
-      const contribution = await presale.contributions(signers.charlie.address);
-      const clearCharlieCwethContribution = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        contribution.toString(),
-        presaleAddress,
-        signers.charlie,
+      const { contribution: contributionShouldBe, actualPurchased } = TestHelpers.calculateExpectedContribution(
+        PURCHASE_AMOUNTS.charlie,
+        beforePurchased,
+        PRESALE_CONFIG.hardCap,
       );
-      console.log("charlie contribution: ", clearCharlieCwethContribution);
-      expect(clearCharlieCwethContribution).to.eq(contributionShouldBe);
 
-      const claimableTokens = await presale.claimableTokens(signers.charlie.address);
-      const clearClaimableTokens = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        claimableTokens.toString(),
-        presaleAddress,
+      charlieActualPurchased = actualPurchased;
+
+      const { clearContribution, clearClaimableTokens } = await TestHelpers.performPurchase(
+        presale,
         signers.charlie,
+        PURCHASE_AMOUNTS.charlie,
+        presaleAddress,
       );
+
+      console.log("charlie contribution: ", clearContribution);
       console.log("charlie claimable tokens: ", clearClaimableTokens);
+
+      expect(clearContribution).to.eq(contributionShouldBe);
       expect(clearClaimableTokens).to.eq(contributionShouldBe * tokenPerEth);
     });
 
     it("Test request finalize presale", async function () {
-      // increase time in hardhat
-      await network.provider.send("evm_increaseTime", [7200]);
-
-      // alice finalize presale
-      await presale.connect(signers.alice).requestFinalizePresaleState();
+      await TestHelpers.finalizePresale(presale, signers.alice);
     });
 
-    it("Test finalize presale", async function () {
-      // owner token balance before finalize
+    it("Test finalize presale and validate token refunds", async function () {
+      // Get owner token balance before finalization
       const ownerTokenBalanceBefore = await token.balanceOf(await presale.owner());
 
-      // Use the built-in `awaitDecryptionOracle` helper to wait for the FHEVM decryption oracle
-      // to complete all pending Solidity decryption requests.
       await fhevm.awaitDecryptionOracle();
 
-      // owner token balance after finalize
+      // Get owner token balance after finalization
       const ownerTokenBalanceAfter = await token.balanceOf(await presale.owner());
 
-      const tokensSold = (aliceActualPurchased + charlieActualPurchased) * tokenPerEth * 10n ** 9n;
+      const tokensSold = (PURCHASE_AMOUNTS.alice + charlieActualPurchased) * tokenPerEth * 10n ** 9n;
 
-      // get presale state
-      const pool = await presale.pool();
-      expect(pool.state).to.eq(4);
-      expect(pool.weiRaised).to.eq((aliceActualPurchased + charlieActualPurchased) * 10n ** 9n);
-      expect(pool.tokensSold).to.eq(tokensSold);
+      // Validate final state
+      const pool = await TestHelpers.validateFinalization(
+        presale,
+        4, // Expected state (finalized)
+        (PURCHASE_AMOUNTS.alice + charlieActualPurchased) * 10n ** 9n, // Expected wei raised
+        tokensSold, // Expected tokens sold
+      );
 
       // Calculate expected token refund
       const leftOverLiquidityToken =
-        pool.options.tokenAddLiquidity - (pool.options.tokenAddLiquidity * tokensSold) / pool.options.tokenPresale;
+        PRESALE_CONFIG.tokenAddLiquidity -
+        (PRESALE_CONFIG.tokenAddLiquidity * tokensSold) / PRESALE_CONFIG.tokenPresale;
       const expectedRefund = pool.options.tokenPresale - pool.tokensSold + leftOverLiquidityToken;
 
-      // owner token refunded
+      // Validate owner token refund
       expect(ownerTokenBalanceAfter - ownerTokenBalanceBefore).to.eq(expectedRefund);
     });
 
-    it("Test alice claim tokens", async function () {
-      // alice clamble token
-      const aliceClaimableTokens = aliceActualPurchased * tokenPerEth;
-
-      // alice claim tokens
-      await presale.connect(signers.alice).claimTokens(signers.alice.address);
-
-      // check alice's token balance
-      const aliceTokenBalance = await ctoken.balanceOf(signers.alice.address);
-      const clearAliceTokenBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        aliceTokenBalance.toString(),
-        await ctoken.getAddress(),
-        signers.alice,
-      );
-      expect(clearAliceTokenBalance).to.eq(aliceClaimableTokens);
+    it("Test Alice claims tokens", async function () {
+      const aliceClaimableTokens = PURCHASE_AMOUNTS.alice * tokenPerEth;
+      const clearBalance = await TestHelpers.claimTokens(presale, signers.alice, ctoken);
+      expect(clearBalance).to.eq(aliceClaimableTokens);
     });
 
-    it("test claim charlie token", async function () {
-      // charlie claim tokens
-      await presale.connect(signers.charlie).claimTokens(signers.charlie.address);
-
-      // check charlie's token balance
-      const charlieTokenBalance = await ctoken.balanceOf(signers.charlie.address);
-      const clearCharlieTokenBalance = await fhevm.userDecryptEuint(
-        FhevmType.euint64,
-        charlieTokenBalance.toString(),
-        await ctoken.getAddress(),
-        signers.charlie,
-      );
-      expect(clearCharlieTokenBalance).to.eq(charlieActualPurchased * tokenPerEth);
+    it("Test Charlie claims tokens", async function () {
+      const charlieClaimableTokens = charlieActualPurchased * tokenPerEth;
+      const clearBalance = await TestHelpers.claimTokens(presale, signers.charlie, ctoken);
+      expect(clearBalance).to.eq(charlieClaimableTokens);
     });
   });
 });

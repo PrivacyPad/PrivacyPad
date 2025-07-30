@@ -12,7 +12,7 @@ import {TFHESafeMath} from "@openzeppelin/contracts-confidential/utils/TFHESafeM
 import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
-import {PrivacyPresaleLib} from "./PrivacyPresaleLib.sol";
+import {PrivacyPresaleLib} from "./libraries/PrivacyPresaleLib.sol";
 import {ConfidentialWETH} from "./ConfidentialWETH.sol";
 import {IWETH9} from "./interfaces/IWETH9.sol";
 import {TransferHelper} from "./libraries/TransferHelper.sol";

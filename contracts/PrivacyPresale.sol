@@ -216,7 +216,7 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         // eth balance of pool
         uint256 ethBalance = address(this).balance;
 
-        require(ethBalance > pool.weiRaised, "Not enough eth");
+        require(ethBalance >= pool.weiRaised, "Not enough eth");
 
         uint256 amountEthToAddLiquidity = (pool.weiRaised * pool.options.liquidityPercentage) /
             MAX_LIQUIDITY_PERCENTAGE;

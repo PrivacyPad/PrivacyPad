@@ -2,14 +2,14 @@
 pragma solidity ^0.8.24;
 
 import {FHE, externalEuint64, euint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
-import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
-import {PrivacyPresale} from "./PrivacyPresale.sol";
-import {ConfidentialWETH} from "./ConfidentialWETH.sol";
+import {ConfidentialTokenWrapper} from "../ConfidentialTokenWrapper.sol";
+import {PrivacyPresale} from "../PrivacyPresale.sol";
+import {ConfidentialWETH} from "../ConfidentialWETH.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IWETH9} from "./interfaces/IWETH9.sol";
-import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
-import {TransferHelper} from "./libraries/TransferHelper.sol";
+import {IWETH9} from "../interfaces/IWETH9.sol";
+import {INonfungiblePositionManager} from "../interfaces/INonfungiblePositionManager.sol";
+import {TransferHelper} from "./TransferHelper.sol";
 
 library PrivacyPresaleLib {
     using SafeERC20 for IERC20;

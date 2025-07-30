@@ -88,7 +88,7 @@ task("task:cweth-deposit", "Deposit ETH to ConfidentialWETH")
 
     console.log("✅ Deposit completed successfully!");
     console.log("Deposited amount:", formatAmount(amount, 18));
-    console.log("Balance after:", clearBalanceAfter / BigInt(1e9));
+    console.log("Balance after:", formatAmount(clearBalanceAfter, 9));
 
     return {
       from: user.address,
@@ -186,11 +186,11 @@ task("task:cweth-balance", "Get ConfidentialWETH balance")
     console.log("Getting ConfidentialWETH balance of user...");
     const balance = await cweth.balanceOf(user.address);
     const clearBalance = await fhevm.userDecryptEuint(FhevmType.euint64, balance.toString(), taskArguments.cweth, user);
-    console.log("Cleared balance:", clearBalance.toString());
+    console.log("Cleared balance:", formatAmount(clearBalance, 9));
 
     console.log("👤 ConfidentialWETH Balance:");
     console.log("User address:", user.address);
-    console.log("Balance:", clearBalance.toString());
+    console.log("Balance:", formatAmount(clearBalance, 9));
 
     return {
       address: user.address,

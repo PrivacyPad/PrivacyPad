@@ -1,7 +1,6 @@
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { task } from "hardhat/config";
 import type { TaskArguments, HardhatRuntimeEnvironment } from "hardhat/types";
-import { time } from "@nomicfoundation/hardhat-network-helpers";
 
 /**
  * PrivacyPresale and PrivacyPresaleFactory Interaction Tasks
@@ -19,20 +18,20 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
  * ===============================
  *
  * 1. Deploy factory and create a presale:
- *    npx hardhat --network localhost task:deploy-factory
- *    npx hardhat --network localhost task:create-presale --name "TestToken" --symbol "TTK" --hardcap 10 --softcap 6
+ *    npx hardhat --network sepolia task:deploy-factory
+ *    npx hardhat --network sepolia task:create-presale --name "TestToken" --symbol "TTK" --hardcap 10 --softcap 6
  *
  * 2. Wrap ETH to cWETH:
- *    npx hardhat --network localhost task:wrap-eth --amount 5 --user 1
+ *    npx hardhat --network sepolia task:wrap-eth --amount 5 --user 1
  *
  * 3. Purchase tokens:
- *    npx hardhat --network localhost task:purchase --amount 2 --user 1 --presale-address <ADDRESS>
+ *    npx hardhat --network sepolia task:purchase --amount 2 --user 1 --presale <ADDRESS>
  *
  * 4. Finalize presale:
- *    npx hardhat --network localhost task:finalize-presale --presale-address <ADDRESS> --user 1
+ *    npx hardhat --network sepolia task:finalize-presale --presale <ADDRESS> --user 1
  *
  * 5. Claim tokens:
- *    npx hardhat --network localhost task:claim-tokens --presale-address <ADDRESS> --user 1
+ *    npx hardhat --network sepolia task:claim-tokens --presale <ADDRESS> --user 1
  */
 
 // Helper function to get signer by index
@@ -55,70 +54,20 @@ function parseAmount(amount: string, decimals: number = 9, hre: HardhatRuntimeEn
 }
 
 /**
- * Deploy PrivacyPresaleFactory
- * Example: npx hardhat --network localhost task:deploy-factory
- */
-task("task:deploy-factory", "Deploy PrivacyPresaleFactory contract").setAction(async function (
-  _taskArguments: TaskArguments,
-  hre,
-) {
-  const { fhevm } = hre;
-
-  console.log("Deploying PrivacyPresaleFactory...");
-
-  // Initialize FHEVM
-  await fhevm.initializeCLIApi();
-
-  const signers = await hre.ethers.getSigners();
-  const deployer = signers[0];
-
-  // Deploy ConfidentialWETH first
-  console.log("Deploying ConfidentialWETH...");
-  const ConfidentialWETH = await hre.ethers.getContractFactory("ConfidentialWETH");
-  const cweth = await ConfidentialWETH.connect(deployer).deploy();
-  await cweth.waitForDeployment();
-  const cwethAddress = await cweth.getAddress();
-  console.log("ConfidentialWETH deployed at:", cwethAddress);
-
-  // Deploy PrivacyPresaleLib library
-  console.log("Deploying PrivacyPresaleLib...");
-  const PrivacyPresaleLib = await hre.ethers.getContractFactory("PrivacyPresaleLib");
-  const privacyPresaleLib = await PrivacyPresaleLib.connect(deployer).deploy();
-  await privacyPresaleLib.waitForDeployment();
-  const privacyPresaleLibAddress = await privacyPresaleLib.getAddress();
-  console.log("PrivacyPresaleLib deployed at:", privacyPresaleLibAddress);
-
-  // Deploy PrivacyPresaleFactory
-  console.log("Deploying PrivacyPresaleFactory...");
-  const PrivacyPresaleFactory = await hre.ethers.getContractFactory("PrivacyPresaleFactory", {
-    libraries: {
-      "contracts/PrivacyPresaleLib.sol:PrivacyPresaleLib": privacyPresaleLibAddress,
-    },
-  });
-  const factory = await PrivacyPresaleFactory.connect(deployer).deploy(cwethAddress);
-  await factory.waitForDeployment();
-  const factoryAddress = await factory.getAddress();
-
-  console.log("✅ PrivacyPresaleFactory deployed successfully!");
-  console.log("Factory address:", factoryAddress);
-  console.log("cWETH address:", cwethAddress);
-  console.log("Library address:", privacyPresaleLibAddress);
-
-  return { factoryAddress, cwethAddress, privacyPresaleLibAddress };
-});
-
-/**
  * Create a new presale
- * Example: npx hardhat --network localhost task:create-presale --name "TestToken" --symbol "TTK" --hardcap 10 --softcap 6
+ * Example:  npx hardhat --network sepolia task:create-presale --name "TestToken" --symbol "TTK" --hardcap 0.005 --softcap 0.002 --tokenpresale 525000 --tokenaddliquidity 125000 --duration 0 --liquidity 50
  */
 task("task:create-presale", "Create a new privacy presale")
   .addParam("name", "Token name")
   .addParam("symbol", "Token symbol")
   .addParam("hardcap", "Hard cap in ETH")
   .addParam("softcap", "Soft cap in ETH")
+  .addParam("tokenpresale", "Token presale amount")
+  .addParam("tokenaddliquidity", "Token add liquidity amount")
   .addOptionalParam("factory", "Factory contract address")
   .addOptionalParam("duration", "Presale duration in hours", "1")
   .addOptionalParam("liquidity", "Liquidity percentage (0-100)", "50")
+  .addOptionalParam("user", "User index (0, 1, 2, etc.)", "0")
   .setAction(async function (taskArguments: TaskArguments, hre) {
     const { fhevm } = hre;
 
@@ -128,7 +77,9 @@ task("task:create-presale", "Create a new privacy presale")
     await fhevm.initializeCLIApi();
 
     const signers = await hre.ethers.getSigners();
-    const deployer = signers[0];
+    // @note check your signer index
+    const deployer = signers[parseInt(taskArguments.user)];
+    console.log("Deployer address:", deployer.address);
 
     // Get factory address
     let factoryAddress = taskArguments.factory;
@@ -144,6 +95,7 @@ task("task:create-presale", "Create a new privacy presale")
         );
       }
     }
+    console.log("Factory address:", factoryAddress);
 
     const factory = await hre.ethers.getContractAt("PrivacyPresaleFactory", factoryAddress);
 
@@ -154,13 +106,13 @@ task("task:create-presale", "Create a new privacy presale")
     const liquidityPercentage = BigInt(parseInt(taskArguments.liquidity) * 100); // Convert to basis points
 
     // Calculate timestamps
-    const now = await time.latest();
-    const startTime = BigInt(now - 60); // Start 1 minute ago
-    const endTime = BigInt(now + duration);
+    const now = Math.floor(Date.now() / 1000);
+    const startTime = BigInt(now); // Start now
+    const endTime = BigInt(now + duration + 1);
 
     // Token amounts (1 billion tokens each for presale and liquidity)
-    const tokenPresale = hre.ethers.parseUnits("1000000000", 18);
-    const tokenAddLiquidity = hre.ethers.parseUnits("1000000000", 18);
+    const tokenPresale = hre.ethers.parseUnits(taskArguments.tokenpresale, 18);
+    const tokenAddLiquidity = hre.ethers.parseUnits(taskArguments.tokenaddliquidity, 18);
 
     // Create presale options
     const presaleOptions = {
@@ -224,67 +176,14 @@ task("task:create-presale", "Create a new privacy presale")
   });
 
 /**
- * Wrap ETH to cWETH
- * Example: npx hardhat --network localhost task:wrap-eth --amount 5 --user 1
- */
-task("task:wrap-eth", "Wrap ETH to confidential WETH")
-  .addParam("amount", "Amount of ETH to wrap")
-  .addParam("user", "User index (0, 1, 2, etc.)")
-  .addOptionalParam("cweth", "cWETH contract address")
-  .setAction(async function (taskArguments: TaskArguments, hre) {
-    const { fhevm } = hre;
-
-    console.log("Wrapping ETH to cWETH...");
-
-    // Initialize FHEVM
-    await fhevm.initializeCLIApi();
-
-    const user = await getSigner(hre, parseInt(taskArguments.user));
-    const amount = parseAmount(taskArguments.amount, 9, hre);
-
-    // Get cWETH address
-    let cwethAddress = taskArguments.cweth;
-    if (!cwethAddress) {
-      try {
-        const { deployments } = hre;
-        const factoryDeployment = await deployments.get("PrivacyPresaleFactory");
-        const factory = await hre.ethers.getContractAt("PrivacyPresaleFactory", factoryDeployment.address);
-        cwethAddress = await factory.cweth();
-      } catch {
-        throw new Error("cWETH address not provided and not found. Please provide --cweth address");
-      }
-    }
-
-    const cweth = await hre.ethers.getContractAt("ConfidentialWETH", cwethAddress);
-
-    console.log(`Wrapping ${formatAmount(amount, 9, hre)} ETH for user ${user.address}...`);
-
-    // Wrap ETH to cWETH
-    const wrapAmount = amount * 10n ** 9n; // Convert to wei
-    const tx = await cweth.connect(user).deposit(user.address, { value: wrapAmount });
-    await tx.wait();
-
-    // Get balance
-    const balance = await cweth.balanceOf(user.address);
-    const clearBalance = await fhevm.userDecryptEuint(FhevmType.euint64, balance.toString(), cwethAddress, user);
-
-    console.log("✅ ETH wrapped successfully!");
-    console.log("User address:", user.address);
-    console.log("Wrapped amount:", formatAmount(amount, 9, hre), "ETH");
-    console.log("cWETH balance:", clearBalance.toString());
-
-    return { userAddress: user.address, wrappedAmount: clearBalance };
-  });
-
-/**
  * Purchase tokens in presale
- * Example: npx hardhat --network localhost task:purchase --amount 2 --user 1 --presale-address <ADDRESS>
+ * Example: npx hardhat --network sepolia task:purchase --amount 0.003 --presale <ADDRESS>
  */
 task("task:purchase", "Purchase tokens in a presale")
-  .addParam("amount", "Amount of ETH to invest")
-  .addParam("user", "User index (0, 1, 2, etc.)")
+  .addParam("amount", "Amount of cWETH to invest")
   .addParam("presale", "Presale contract address")
   .addOptionalParam("beneficiary", "Beneficiary address (defaults to user)")
+  .addOptionalParam("user", "User index (0, 1, 2, etc.)", "0")
   .setAction(async function (taskArguments: TaskArguments, hre) {
     const { fhevm } = hre;
 
@@ -305,7 +204,7 @@ task("task:purchase", "Purchase tokens in a presale")
     const cwethAddress = pool.cweth;
     const cweth = await hre.ethers.getContractAt("ConfidentialWETH", cwethAddress);
 
-    console.log(`Purchasing ${formatAmount(amount, 9, hre)} ETH worth of tokens...`);
+    console.log(`Purchasing ${formatAmount(amount, 9, hre)} cWETH worth of tokens...`);
     console.log("User:", user.address);
     console.log("Beneficiary:", beneficiary);
 
@@ -319,7 +218,7 @@ task("task:purchase", "Purchase tokens in a presale")
 
     // Approve presale to spend cWETH
     console.log("Approving presale to spend cWETH...");
-    const now = await time.latest();
+    const now = Math.floor(Date.now() / 1000);
     const expiry = BigInt(now + 1000); // 1000 seconds from now
     await cweth.connect(user).setOperator(taskArguments.presale, expiry);
 
@@ -331,9 +230,6 @@ task("task:purchase", "Purchase tokens in a presale")
     console.log("Executing purchase...");
     const tx = await presale.connect(user).purchase(beneficiary, encrypted.handles[0], encrypted.inputProof);
     await tx.wait();
-
-    // Wait for FHEVM to process
-    await fhevm.awaitDecryptionOracle();
 
     // Get contribution and claimable tokens
     const [contribution, claimableTokens] = await Promise.all([
@@ -355,11 +251,11 @@ task("task:purchase", "Purchase tokens in a presale")
 
 /**
  * Request finalize presale
- * Example: npx hardhat --network localhost task:request-finalize --presale-address <ADDRESS> --user 1
+ * Example: npx hardhat --network sepolia task:request-finalize --presale <ADDRESS> --user 1
  */
 task("task:request-finalize", "Request to finalize a presale")
   .addParam("presale", "Presale contract address")
-  .addParam("user", "User index (0, 1, 2, etc.)")
+  .addOptionalParam("user", "User index (0, 1, 2, etc.)", "0")
   .setAction(async function (taskArguments: TaskArguments, hre) {
     // No destructuring needed for this task
 
@@ -371,14 +267,8 @@ task("task:request-finalize", "Request to finalize a presale")
     // Get current pool state
     const pool = await presale.pool();
     console.log("Current pool state:", pool.state);
-    console.log("Current time:", new Date((await time.latest()) * 1000).toISOString());
+    console.log("Current time:", new Date(Math.floor(Date.now() / 1000) * 1000).toISOString());
     console.log("Presale end time:", new Date(Number(pool.options.end) * 1000).toISOString());
-
-    // Advance time if needed
-    if ((await time.latest()) < Number(pool.options.end)) {
-      console.log("Advancing time to after presale end...");
-      await time.increase(7200); // 2 hours
-    }
 
     // Request finalization
     console.log("Requesting finalization...");
@@ -393,7 +283,7 @@ task("task:request-finalize", "Request to finalize a presale")
 
 /**
  * Finalize presale (simulated for testing)
- * Example: npx hardhat --network localhost task:finalize-presale --presale-address <ADDRESS> --user 1
+ * Example: npx hardhat --network sepolia task:finalize-presale --presale <ADDRESS> --user 1
  */
 task("task:finalize-presale", "Finalize a presale (simulated for testing)")
   .addParam("presale", "Presale contract address")
@@ -454,7 +344,7 @@ task("task:finalize-presale", "Finalize a presale (simulated for testing)")
 
 /**
  * Claim tokens after successful presale
- * Example: npx hardhat --network localhost task:claim-tokens --presale-address <ADDRESS> --user 1
+ * Example: npx hardhat --network sepolia task:claim-tokens --presale <ADDRESS> --user 1
  */
 task("task:claim-tokens", "Claim tokens after successful presale")
   .addParam("presale", "Presale contract address")
@@ -519,7 +409,7 @@ task("task:claim-tokens", "Claim tokens after successful presale")
 
 /**
  * Refund contribution for failed presale
- * Example: npx hardhat --network localhost task:refund --presale-address <ADDRESS> --user 1
+ * Example: npx hardhat --network sepolia task:refund --presale <ADDRESS> --user 1
  */
 task("task:refund", "Refund contribution for failed presale")
   .addParam("presale", "Presale contract address")
@@ -573,7 +463,7 @@ task("task:refund", "Refund contribution for failed presale")
 
 /**
  * Get presale information
- * Example: npx hardhat --network localhost task:presale-info --presale-address <ADDRESS>
+ * Example: npx hardhat --network sepolia task:presale-info --presale <ADDRESS>
  */
 task("task:presale-info", "Get presale information")
   .addParam("presale", "Presale contract address")
@@ -637,7 +527,7 @@ task("task:presale-info", "Get presale information")
 
 /**
  * Get user contribution information
- * Example: npx hardhat --network localhost task:user-info --presale-address <ADDRESS> --user 1
+ * Example: npx hardhat --network sepolia task:user-info --presale <ADDRESS> --user 1
  */
 task("task:user-info", "Get user contribution and claim information")
   .addParam("presale", "Presale contract address")
@@ -680,5 +570,86 @@ task("task:user-info", "Get user contribution and claim information")
       claimableTokens: clearClaimableTokens,
       claimed,
       refunded,
+    };
+  });
+
+/**
+ * Add liquidity to DEX after successful presale
+ * Example: npx hardhat --network sepolia task:add-liquidity --presale <ADDRESS> --user 0
+ */
+task("task:add-liquidity", "Add liquidity to DEX after successful presale")
+  .addParam("presale", "Presale contract address")
+  .addOptionalParam("user", "User index (0, 1, 2, etc.)", "0")
+  .setAction(async function (taskArguments: TaskArguments, hre) {
+    const { fhevm } = hre;
+
+    // Initialize FHEVM
+    await fhevm.initializeCLIApi();
+
+    console.log("Adding liquidity to DEX...");
+
+    const user = await getSigner(hre, parseInt(taskArguments.user));
+    const presale = await hre.ethers.getContractAt("PrivacyPresale", taskArguments.presale);
+
+    // Get pool state
+    const pool = await presale.pool();
+    if (Number(pool.state) !== 4) {
+      throw new Error(`Presale is not finalized. Current state: ${pool.state}`);
+    }
+
+    // Check if user is the owner
+    const owner = await presale.owner();
+    if (user.address !== owner) {
+      throw new Error(`Only owner can add liquidity. Owner: ${owner}, User: ${user.address}`);
+    }
+
+    // Get presale information before adding liquidity
+    console.log("📊 Presale state before adding liquidity:");
+    console.log("Wei raised:", formatAmount(pool.weiRaised, 18, hre));
+    console.log("Tokens sold:", formatAmount(pool.tokensSold, 18, hre));
+    console.log("Liquidity percentage:", Number(pool.options.liquidityPercentage) / 100, "%");
+
+    // Calculate expected amounts
+    const expectedEthForLiquidity =
+      (pool.weiRaised * BigInt(Math.floor(Number(pool.options.liquidityPercentage)))) / 10000n;
+    const expectedEthForOwner = pool.weiRaised - expectedEthForLiquidity;
+
+    console.log("Expected ETH for liquidity:", formatAmount(expectedEthForLiquidity, 18, hre));
+    console.log("Expected ETH for owner:", formatAmount(expectedEthForOwner, 18, hre));
+
+    // Get contract ETH balance
+    const contractBalance = await hre.ethers.provider.getBalance(taskArguments.presale);
+    console.log("Contract ETH balance:", formatAmount(contractBalance, 18, hre));
+
+    if (contractBalance < pool.weiRaised) {
+      throw new Error(
+        `Not enough ETH in contract. Have: ${formatAmount(contractBalance, 18, hre)}, Need: > ${formatAmount(pool.weiRaised, 18, hre)}`,
+      );
+    }
+
+    // Get token balance for liquidity
+    const token = await hre.ethers.getContractAt("IERC20", pool.token);
+    const tokenBalance = await token.balanceOf(taskArguments.presale);
+    console.log("Token balance for liquidity:", formatAmount(tokenBalance, 18, hre));
+
+    // Add liquidity
+    console.log("Executing addLiquidity...");
+    const tx = await presale.connect(user).addLiquidity();
+    await tx.wait();
+
+    // Get updated pool state
+    const poolAfter = await presale.pool();
+    console.log("Pool address after adding liquidity:", poolAfter.dex);
+
+    console.log("✅ Liquidity added successfully!");
+    console.log("Transaction hash:", tx.hash);
+    console.log("DEX pool address:", poolAfter.dex);
+
+    return {
+      txHash: tx.hash,
+      dexPoolAddress: poolAfter.dex,
+      ethForLiquidity: expectedEthForLiquidity,
+      ethForOwner: expectedEthForOwner,
+      tokenForLiquidity: tokenBalance,
     };
   });

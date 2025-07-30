@@ -1,6 +1,6 @@
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { task } from "hardhat/config";
-import type { TaskArguments, HardhatRuntimeEnvironment } from "hardhat/types";
+import type { HardhatRuntimeEnvironment, TaskArguments } from "hardhat/types";
 
 /**
  * PrivacyPresale and PrivacyPresaleFactory Interaction Tasks

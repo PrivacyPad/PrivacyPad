@@ -9,10 +9,10 @@ import type { HardhatUserConfig } from "hardhat/config";
 import { vars } from "hardhat/config";
 import "solidity-coverage";
 
-import "./tasks/accounts";
+import "./tasks/ConfidentialWETH";
 import "./tasks/EncryptedERC20";
 import "./tasks/PrivacyPresale";
-import "./tasks/ConfidentialWETH";
+import "./tasks/accounts";
 
 // Run 'npx hardhat vars setup' to see the list of variables that need to be set
 

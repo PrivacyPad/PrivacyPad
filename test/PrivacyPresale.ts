@@ -1,17 +1,18 @@
+import { FhevmType } from "@fhevm/hardhat-plugin";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { ethers, fhevm, network } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { Log } from "ethers";
-import { ConfidentialWETH, PrivacyPresaleFactory, PrivacyPresale, ConfidentialTokenWrapper } from "../types/contracts";
+import { ethers, fhevm, network } from "hardhat";
+
+import { IERC20, IERC20__factory } from "../types";
+import { ConfidentialTokenWrapper, ConfidentialWETH, PrivacyPresale, PrivacyPresaleFactory } from "../types/contracts";
 import {
   ConfidentialTokenWrapper__factory,
   ConfidentialWETH__factory,
   PrivacyPresaleFactory__factory,
   PrivacyPresale__factory,
 } from "../types/factories/contracts";
-import { FhevmType } from "@fhevm/hardhat-plugin";
-import { IERC20, IERC20__factory } from "../types";
 
 // Constants for better maintainability
 const TIME_INCREASE = 7200; // 2 hours

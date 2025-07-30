@@ -10,7 +10,6 @@ import { vars } from "hardhat/config";
 import "solidity-coverage";
 
 import "./tasks/ConfidentialWETH";
-import "./tasks/EncryptedERC20";
 import "./tasks/PrivacyPresale";
 import "./tasks/accounts";
 

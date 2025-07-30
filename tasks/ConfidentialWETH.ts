@@ -106,7 +106,7 @@ task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
   .addParam("amount", "Amount of cWETH to withdraw")
   .addParam("user", "User index (0, 1, 2, etc.)")
   .addParam("cweth", "ConfidentialWETH contract address")
-  .addParam("to", "Recipient address for ETH")
+  .addOptionalParam("to", "Recipient address for ETH")
   .setAction(async function (taskArguments: TaskArguments, hre) {
     const { fhevm } = hre;
 
@@ -119,10 +119,11 @@ task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
     const amount = parseAmount(taskArguments.amount, 9);
 
     const cweth = await hre.ethers.getContractAt("ConfidentialWETH", taskArguments.cweth);
+    const to = taskArguments.to || user.address;
 
     console.log(`Withdrawing ${formatAmount(amount, 9)} cWETH...`);
     console.log("From:", user.address);
-    console.log("To:", taskArguments.to);
+    console.log("To:", to);
 
     // Check if user has enough cWETH
     const balance = await cweth.balanceOf(user.address);
@@ -133,7 +134,7 @@ task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
     }
 
     // Get ETH balance before withdrawal
-    const ethBalanceBefore = await hre.ethers.provider.getBalance(taskArguments.to);
+    const ethBalanceBefore = await hre.ethers.provider.getBalance(to);
 
     // Create encrypted withdrawal input
     console.log("Creating encrypted withdrawal input...");
@@ -143,21 +144,18 @@ task("task:cweth-withdraw", "Withdraw ETH from ConfidentialWETH")
     console.log("Executing withdrawal...");
     const tx = await cweth
       .connect(user)
-      .withdraw(user.address, taskArguments.to, encrypted.handles[0], encrypted.inputProof);
+      ["withdraw(address,address,bytes32,bytes)"](user.address, to, encrypted.handles[0], encrypted.inputProof);
     await tx.wait();
 
-    // Wait for FHEVM to process
-    await fhevm.awaitDecryptionOracle();
-
     // Get ETH balance after withdrawal
-    const ethBalanceAfter = await hre.ethers.provider.getBalance(taskArguments.to);
+    const ethBalanceAfter = await hre.ethers.provider.getBalance(to);
 
     console.log("✅ Withdrawal completed successfully!");
     console.log("ETH received:", formatAmount(ethBalanceAfter - ethBalanceBefore, 9));
 
     return {
       from: user.address,
-      to: taskArguments.to,
+      to: to,
       withdrawnAmount: ethBalanceAfter - ethBalanceBefore,
     };
   });

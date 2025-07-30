@@ -13,12 +13,12 @@ import {TransferHelper} from "./TransferHelper.sol";
 
 library PrivacyPresaleLib {
     using SafeERC20 for IERC20;
-    IWETH9 public constant weth = IWETH9(0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14);
-    INonfungiblePositionManager public constant posm =
+    IWETH9 public constant WETH = IWETH9(0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14);
+    INonfungiblePositionManager public constant POSM =
         INonfungiblePositionManager(0x1238536071E1c677A632429e3655c799b22cDA52);
-    int24 constant TICK_MIN_USABLE = -887220;
-    int24 constant TICK_MAX_USABLE = 887220;
-    uint24 constant LP_FEE = 3000;
+    int24 private constant TICK_MIN_USABLE = -887220;
+    int24 private constant TICK_MAX_USABLE = 887220;
+    uint24 private constant LP_FEE = 3000;
 
     /**
      * @notice Handles purchase logic with aggressive storage read optimization
@@ -185,14 +185,14 @@ library PrivacyPresaleLib {
         uint256 balanceTokenAddLiquidity,
         uint256 balanceETHAddLiquidity
     ) external returns (address) {
-        weth.deposit{value: balanceETHAddLiquidity}();
-        (address token0, address token1, uint256 balance0, uint256 balance1) = (uint160(token) < uint160(address(weth)))
-            ? (token, address(weth), balanceTokenAddLiquidity, balanceETHAddLiquidity)
-            : (address(weth), token, balanceETHAddLiquidity, balanceTokenAddLiquidity);
+        WETH.deposit{value: balanceETHAddLiquidity}();
+        (address token0, address token1, uint256 balance0, uint256 balance1) = (uint160(token) < uint160(address(WETH)))
+            ? (token, address(WETH), balanceTokenAddLiquidity, balanceETHAddLiquidity)
+            : (address(WETH), token, balanceETHAddLiquidity, balanceTokenAddLiquidity);
         uint160 initializePrice = uint160(sqrt((balance1 << 96) / balance0) << 48);
-        address _pool = posm.createAndInitializePoolIfNecessary(token0, token1, LP_FEE, initializePrice);
-        TransferHelper.safeApprove(token0, address(posm), balance0);
-        TransferHelper.safeApprove(token1, address(posm), balance1);
+        address _pool = POSM.createAndInitializePoolIfNecessary(token0, token1, LP_FEE, initializePrice);
+        TransferHelper.safeApprove(token0, address(POSM), balance0);
+        TransferHelper.safeApprove(token1, address(POSM), balance1);
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
@@ -208,12 +208,12 @@ library PrivacyPresaleLib {
             deadline: block.timestamp
         });
 
-        posm.mint(params);
+        POSM.mint(params);
         return _pool;
     }
 
-    function sqrt(uint x) internal pure returns (uint y) {
-        uint z = (x + 1) / 2;
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
+        uint256 z = (x + 1) / 2;
         y = x;
         while (z < y) {
             y = z;

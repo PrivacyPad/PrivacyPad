@@ -4,28 +4,24 @@ pragma solidity ^0.8.26;
 
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {FHE, externalEuint64, euint64} from "@fhevm/solidity/lib/FHE.sol";
-import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
-import {IERC1363Receiver} from "@openzeppelin/contracts/interfaces/IERC1363Receiver.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ConfidentialFungibleToken} from "@openzeppelin/contracts-confidential/token/ConfidentialFungibleToken.sol";
 
 contract ConfidentialWETH is ConfidentialFungibleToken, SepoliaConfig {
-    uint8 private immutable _decimals;
-    uint256 private immutable _rate;
+    uint8 private immutable DECIMALS;
+    uint256 private immutable RATE;
 
     /// @dev Mapping from gateway decryption request ID to the address that will receive the tokens
-    mapping(uint256 decryptionRequest => address) private _receivers;
+    mapping(uint256 requestID => address receiver) private _receivers;
 
     constructor() ConfidentialFungibleToken("Confidential WETH", "cWETH", "https://cweth.com") {
-        _decimals = 9;
-        _rate = 10 ** 9;
+        DECIMALS = 9;
+        RATE = 10 ** 9;
     }
 
     /// @inheritdoc ConfidentialFungibleToken
     function decimals() public view virtual override returns (uint8) {
-        return _decimals;
+        return DECIMALS;
     }
 
     /**
@@ -33,7 +29,7 @@ contract ConfidentialWETH is ConfidentialFungibleToken, SepoliaConfig {
      * For example, if the `rate` is 1000, then 1000 units of the underlying token equal 1 unit of the wrapped token.
      */
     function rate() public view returns (uint256) {
-        return _rate;
+        return RATE;
     }
 
     /**

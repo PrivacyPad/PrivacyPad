@@ -2,7 +2,6 @@
 
 pragma solidity ^0.8.26;
 
-import {FHE, euint64, externalEuint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {
     ConfidentialFungibleTokenERC20Wrapper

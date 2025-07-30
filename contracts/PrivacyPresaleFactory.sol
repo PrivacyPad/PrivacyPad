@@ -17,7 +17,7 @@ contract PrivacyPresaleFactory {
     address[] public allPresales;
 
     // Optional: mapping from creator to their presale contracts
-    mapping(address => address[]) public presalesByCreator;
+    mapping(address creator => address[] presales) public presalesByCreator;
 
     // Event emitted when a new presale is created
     event PrivacyPresaleCreated(
@@ -105,14 +105,7 @@ contract PrivacyPresaleFactory {
         presalesByCreator[msg.sender].push(address(newPresale));
 
         // Emit event
-        emit PrivacyPresaleCreated(
-            msg.sender,
-            address(newPresale),
-            address(newToken),
-            address(ctoken),
-            // uniswapV2Router02,
-            cweth
-        );
+        emit PrivacyPresaleCreated(msg.sender, address(newPresale), address(newToken), address(ctoken), cweth);
 
         return address(newPresale);
     }

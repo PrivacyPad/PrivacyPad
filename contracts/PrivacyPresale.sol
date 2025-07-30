@@ -1,30 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {FHE, externalEuint64, euint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, externalEuint64, euint64} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IPrivacyPresale} from "./interfaces/IPrivacyPresale.sol";
-import {ConfidentialFungibleToken} from "@openzeppelin/contracts-confidential/token/ConfidentialFungibleToken.sol";
-import {TFHESafeMath} from "@openzeppelin/contracts-confidential/utils/TFHESafeMath.sol";
 import {ConfidentialTokenWrapper} from "./ConfidentialTokenWrapper.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {PrivacyPresaleLib} from "./libraries/PrivacyPresaleLib.sol";
 import {ConfidentialWETH} from "./ConfidentialWETH.sol";
-import {IWETH9} from "./interfaces/IWETH9.sol";
-import {TransferHelper} from "./libraries/TransferHelper.sol";
 
 contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
-    uint256 constant MAX_LIQUIDITY_PERCENTAGE = 10000;
-    // int24 constant TICK_MIN_USABLE = -887220;
-    // int24 constant TICK_MAX_USABLE = 887220;
-    // uint24 constant LP_FEE = 3000;
+    uint256 private constant MAX_LIQUIDITY_PERCENTAGE = 10000;
 
     /**
      * @notice Presale options
@@ -72,10 +65,10 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         PresaleOptions options;
     }
 
-    mapping(address => euint64) public contributions;
-    mapping(address => euint64) public claimableTokens;
-    mapping(address => bool) public claimed;
-    mapping(address => bool) public refunded;
+    mapping(address user => euint64 contribution) public contributions;
+    mapping(address user => euint64 claimableTokens) public claimableTokens;
+    mapping(address user => bool claimed) public claimed;
+    mapping(address user => bool refunded) public refunded;
 
     Pool public pool;
 

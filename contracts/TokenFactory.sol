@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.26;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/proxy/Clones.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title TokenFactory
@@ -11,11 +10,6 @@ import "@openzeppelin/contracts/proxy/Clones.sol";
  * This factory uses the clone pattern to deploy new tokens efficiently.
  */
 contract TokenFactory {
-    /**
-     * @dev Constructor sets the initial owner of the factory.
-     */
-    constructor() {}
-
     // Events to track token creation
     event TokenCreated(
         address indexed tokenAddress,
@@ -31,7 +25,7 @@ contract TokenFactory {
     address[] public createdTokens;
 
     // Mapping to track token creators
-    mapping(address => address) public tokenCreators;
+    mapping(address token => address creator) public tokenCreators;
 
     /**
      * @dev Creates a new ERC20 token with the specified parameters.
@@ -137,29 +131,6 @@ contract FactoryToken is ERC20, Ownable {
      */
     function decimals() public view virtual override returns (uint8) {
         return _decimals;
-    }
-
-    /**
-     * @dev Returns the token metadata as a JSON string.
-     * @return JSON string containing token metadata
-     */
-    function getMetadata() external view returns (string memory) {
-        return
-            string(
-                abi.encodePacked(
-                    '{"name":"',
-                    name(),
-                    '","symbol":"',
-                    symbol(),
-                    '","decimals":"',
-                    _toString(decimals()),
-                    '","totalSupply":"',
-                    _toString(totalSupply()),
-                    '","url":"',
-                    tokenUrl,
-                    '"}'
-                )
-            );
     }
 
     /**

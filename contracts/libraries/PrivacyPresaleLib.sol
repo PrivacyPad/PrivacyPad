@@ -148,6 +148,8 @@ library PrivacyPresaleLib {
         pool.weiRaised = weiRaised;
         pool.tokensSold = tokensSoldValue;
 
+        require(pool.state == 2, "Invalid pool state");
+
         if (cwethRaised < softCap) {
             // Presale failed - return tokens to owner
             pool.state = 3;

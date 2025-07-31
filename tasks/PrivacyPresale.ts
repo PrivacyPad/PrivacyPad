@@ -108,7 +108,7 @@ task("task:create-presale", "Create a new privacy presale")
     // Calculate timestamps
     const now = Math.floor(Date.now() / 1000);
     const startTime = BigInt(now); // Start now
-    const endTime = BigInt(now + duration + 1);
+    const endTime = BigInt(now + duration + 180);
 
     // Token amounts (1 billion tokens each for presale and liquidity)
     const tokenPresale = hre.ethers.parseUnits(taskArguments.tokenpresale, 18);
@@ -384,7 +384,7 @@ task("task:claim-tokens", "Claim tokens after successful presale")
       user,
     );
 
-    console.log(`Claiming ${clearClaimableTokens.toString()} tokens for ${beneficiary}...`);
+    console.log(`Claiming ${formatAmount(clearClaimableTokens, 9, hre)} tokens for ${beneficiary}...`);
 
     // Claim tokens
     const tx = await presale.connect(user).claimTokens(beneficiary);

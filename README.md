@@ -52,7 +52,7 @@ settlement.
 **If the presale is successful:**
 
 - ERC-20 tokens are wrapped into their confidential form (cTokens)
-- cWETH is unwrapped into ETH and used to add liquidity on DEXes
+- cWETH is unwrapped into ETH and used to add liquidity with normal token on DEXes (Currently support UniswapV3)
 - Users can privately claim their cTokens
 
 **If the presale fails:**
@@ -91,19 +91,22 @@ contracts/
 
 ## Future Development
 
-- **Support more types of investment tokens**: cUSDT, cDAI, etc.
+- **Expand Token Support**: Integrate additional investment tokens such as cUSDT, cDAI, and others to enhance platform
+  versatility.
 - **Support more types of investment**:
-  - Fairlaunch
-  - Overflow
+  - Fair Launch
+  - Overflow Mechanism
   - Private Sale
   - Bonding Curve
+- **Integrate Privacy-Enabled DEXs**: As decentralized exchanges evolve to support cTokens, we aim to leverage these
+  platforms to enable fully private investment and trading experiences
 
 ## Supported Chains
 
 ### Sepolia Testnet
 
 - ConfidentialWETH: `0x1A7258dFA114fc3Daf2849F131aF022E3Ec90eEe`
-- PrivacyPresaleFactory: `0xe0dcee4066D0a7389764e1d582f1Edc06aD6F02e`
+- PrivacyPresaleFactory: `0x1B28564C202cB44d8bA06d7EE6F45E7842a2c711`
 
 ## How to deploy
 

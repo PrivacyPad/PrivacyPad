@@ -22,7 +22,7 @@ const INFURA_API_KEY: string = vars.get("INFURA_API_KEY", "zzzzzzzzzzzzzzzzzzzzz
 const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
   namedAccounts: {
-    deployer: 5,
+    deployer: 0,
   },
   etherscan: {
     apiKey: {

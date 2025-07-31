@@ -8,9 +8,11 @@
 A decentralized launchpad protocol focused on financial privacy, powered by Fully Homomorphic Encryption (FHE).
 </p>
 
-## Demo
+## App - Demo link
 
-<a target="_blank" href="https://docs.zama.ai/protocol/solidity-guides/getting-started/quick-start-tutorial">Video</a>
+<a href="https://launchpad-interface-eight.vercel.app/ ">MVP app link</a>
+
+<a href="https://drive.google.com/drive/folders/1qVWWKMerpkDfAW2cw7hoYnB8EopLcnS1">Video demo</a>
 
 ## Description
 

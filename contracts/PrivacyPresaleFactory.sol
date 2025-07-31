@@ -47,9 +47,6 @@ contract PrivacyPresaleFactory {
         address _token,
         PrivacyPresale.PresaleOptions memory _options
     ) external returns (address presale) {
-        // transfer token to this contract
-        IERC20(_token).safeTransferFrom(msg.sender, address(this), _options.tokenAddLiquidity + _options.tokenPresale);
-
         // create confidential token wrapper
         ConfidentialTokenWrapper ctoken = new ConfidentialTokenWrapper(
             string(abi.encodePacked("Confidential ", IERC20Metadata(_token).name())),
@@ -60,6 +57,13 @@ contract PrivacyPresaleFactory {
 
         // Deploy new PrivacyPresale contract
         PrivacyPresale newPresale = new PrivacyPresale(msg.sender, cweth, _token, address(ctoken), _options);
+
+        // transfer token to this contract
+        IERC20(_token).safeTransferFrom(
+            msg.sender,
+            address(newPresale),
+            _options.tokenAddLiquidity + _options.tokenPresale
+        );
 
         // Store the address
         allPresales.push(address(newPresale));

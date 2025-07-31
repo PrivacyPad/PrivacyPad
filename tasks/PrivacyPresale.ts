@@ -257,6 +257,8 @@ task("task:request-finalize", "Request to finalize a presale")
   .addParam("presale", "Presale contract address")
   .addOptionalParam("user", "User index (0, 1, 2, etc.)", "0")
   .setAction(async function (taskArguments: TaskArguments, hre) {
+    await hre.fhevm.initializeCLIApi();
+
     // No destructuring needed for this task
 
     console.log("Requesting presale finalization...");
@@ -299,46 +301,24 @@ task("task:finalize-presale", "Finalize a presale (simulated for testing)")
     const _user = await getSigner(hre, parseInt(taskArguments.user));
     const presale = await hre.ethers.getContractAt("PrivacyPresale", taskArguments.presale);
 
-    // Get pool state before finalization
-    const poolBefore = await presale.pool();
-    console.log("Pool state before finalization:", poolBefore.state);
+    const pool = await presale.pool();
+    const ethRaised = await fhevm.publicDecryptEuint(FhevmType.euint64, pool.ethRaisedEncrypted.toString());
+    const tokensSold = await fhevm.publicDecryptEuint(FhevmType.euint64, pool.tokensSoldEncrypted.toString());
 
-    // Wait for decryption oracle
-    await fhevm.awaitDecryptionOracle();
+    console.log("Pool state:", pool.state);
+    console.log("Eth raised:", formatAmount(ethRaised, 9, hre), "ETH");
+    console.log("Tokens sold:", formatAmount(tokensSold, 9, hre), "TTK");
 
-    // Get pool state after finalization
-    const poolAfter = await presale.pool();
-    console.log("Pool state after finalization:", poolAfter.state);
-    console.log("Wei raised:", formatAmount(poolAfter.weiRaised, 9, hre));
-    console.log("Tokens sold:", formatAmount(poolAfter.tokensSold, 18, hre));
+    const tx = await presale.connect(_user).finalizePreSale(0, ethRaised, tokensSold, [Buffer.from("0x")]);
+    await tx.wait();
 
-    // Determine final state
-    let stateDescription = "Unknown";
-    switch (Number(poolAfter.state)) {
-      case 1:
-        stateDescription = "Active";
-        break;
-      case 2:
-        stateDescription = "Waiting for finalize";
-        break;
-      case 3:
-        stateDescription = "Cancelled";
-        break;
-      case 4:
-        stateDescription = "Finalized";
-        break;
-    }
-
-    console.log("✅ Presale finalization completed!");
-    console.log("Final state:", stateDescription);
-    console.log("Final wei raised:", formatAmount(poolAfter.weiRaised, 9, hre));
-    console.log("Final tokens sold:", formatAmount(poolAfter.tokensSold, 18, hre));
+    console.log("✅ Finalization completed successfully!");
+    console.log("Transaction hash:", tx.hash);
 
     return {
-      state: poolAfter.state,
-      stateDescription,
-      weiRaised: poolAfter.weiRaised,
-      tokensSold: poolAfter.tokensSold,
+      state: pool.state,
+      tokensSold,
+      ethRaised,
     };
   });
 

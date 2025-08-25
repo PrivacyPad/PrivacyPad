@@ -10,31 +10,20 @@ import {PresaleToken} from "./PresaleToken.sol";
 
 contract PrivacyPresaleFactory {
     using SafeERC20 for IERC20;
-    address public cweth;
-    // address public uniswapV2Router02;
+    address private cweth;
 
     // Array to keep track of all created presale contracts
     address[] public allPresales;
 
     // Optional: mapping from creator to their presale contracts
-    mapping(address creator => address[] presales) public presalesByCreator;
+    mapping(address creator => address[] presales) private presalesByCreator;
 
     // Event emitted when a new presale is created
-    event PrivacyPresaleCreated(
-        address indexed creator,
-        address presale,
-        address token,
-        address ctoken,
-        // address uniswapV2Router02,
-        address cweth
-    );
+    event PrivacyPresaleCreated(address indexed creator, address presale, address token, address ctoken, address cweth);
 
     constructor(address _cweth) {
         require(_cweth != address(0), "Invalid cweth address");
-        // require(_uniswapV2Router02 != address(0), "Invalid uniswapV2Router02 address");
-
         cweth = _cweth;
-        // uniswapV2Router02 = _uniswapV2Router02;
     }
 
     /**
@@ -112,20 +101,6 @@ contract PrivacyPresaleFactory {
         emit PrivacyPresaleCreated(msg.sender, address(newPresale), address(newToken), address(ctoken), cweth);
 
         return address(newPresale);
-    }
-
-    /**
-     * @notice Returns the number of presales created.
-     */
-    function getPresalesCount() external view returns (uint256) {
-        return allPresales.length;
-    }
-
-    /**
-     * @notice Returns all presale addresses.
-     */
-    function getAllPresales() external view returns (address[] memory) {
-        return allPresales;
     }
 
     /**

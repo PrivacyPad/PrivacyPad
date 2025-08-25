@@ -64,6 +64,8 @@ task("task:create-presale", "Create a new privacy presale")
   .addParam("softcap", "Soft cap in ETH")
   .addParam("tokenpresale", "Token presale amount")
   .addParam("tokenaddliquidity", "Token add liquidity amount")
+  .addParam("maxcontribution", "Max contribution in ETH")
+  .addParam("mincontribution", "Min contribution in ETH")
   .addOptionalParam("factory", "Factory contract address")
   .addOptionalParam("duration", "Presale duration in hours", "1")
   .addOptionalParam("liquidity", "Liquidity percentage (0-100)", "50")
@@ -104,6 +106,8 @@ task("task:create-presale", "Create a new privacy presale")
     const softCap = parseAmount(taskArguments.softcap, 9, hre);
     const duration = parseInt(taskArguments.duration) * 3600; // Convert hours to seconds
     const liquidityPercentage = BigInt(parseInt(taskArguments.liquidity) * 100); // Convert to basis points
+    const maxContribution = parseAmount(taskArguments.maxcontribution, 9, hre);
+    const minContribution = parseAmount(taskArguments.mincontribution, 9, hre);
 
     // Calculate timestamps
     const now = Math.floor(Date.now() / 1000);
@@ -123,6 +127,8 @@ task("task:create-presale", "Create a new privacy presale")
       softCap: BigInt(softCap),
       start: startTime,
       end: endTime,
+      maxContribution: BigInt(maxContribution),
+      minContribution: BigInt(minContribution),
     };
 
     console.log("Presale configuration:");

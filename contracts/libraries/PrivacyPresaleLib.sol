@@ -20,6 +20,24 @@ library PrivacyPresaleLib {
     int24 private constant TICK_MAX_USABLE = 887220;
     uint24 private constant LP_FEE = 3000;
 
+    function _handleContribution(
+        euint64 contributed,
+        euint64 purchaseAmount,
+        uint64 minContribution,
+        uint64 maxContribution
+    ) internal returns (euint64 finalPurchase) {
+        // handle maxContribution
+        // amount left able to contribute, based on the logic, this sub will not occur overflow
+        euint64 ableToContribute = FHE.sub(maxContribution, contributed);
+        ebool isOverMaxContribute = FHE.ge(purchaseAmount, ableToContribute);
+        finalPurchase = FHE.select(isOverMaxContribute, ableToContribute, purchaseAmount);
+
+        // handle minContribution, must >= minContribution
+        ebool isPassMinContribution = FHE.ge(FHE.add(finalPurchase, contributed), minContribution);
+        // if not pass then the contribution is 0
+        finalPurchase = FHE.select(isPassMinContribution, finalPurchase, FHE.asEuint64(0));
+    }
+
     /**
      * @notice Handles purchase logic with aggressive storage read optimization
      * @dev Caches all storage variables to minimize SLOAD operations
@@ -42,14 +60,21 @@ library PrivacyPresaleLib {
         euint64 userClaimableTokens = claimableTokens[beneficiary];
 
         // Convert external encrypted amount to internal format
-        euint64 transferAmount = FHE.fromExternal(encryptedAmount, inputProof);
-        FHE.allowTransient(transferAmount, cweth);
+        euint64 purchaseAmount = FHE.fromExternal(encryptedAmount, inputProof);
+        euint64 finalPurchase = _handleContribution(
+            userContribution,
+            purchaseAmount,
+            pool.options.minContribution,
+            pool.options.maxContribution
+        );
+
+        FHE.allowTransient(finalPurchase, cweth);
 
         // Perform confidential transfer
         euint64 transferred = ConfidentialTokenWrapper(cweth).confidentialTransferFrom(
             beneficiary,
             address(this),
-            transferAmount
+            finalPurchase
         );
 
         // Cache current eth raised to avoid multiple storage reads

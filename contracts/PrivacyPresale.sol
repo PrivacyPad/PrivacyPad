@@ -33,6 +33,8 @@ contract PrivacyPresale is SepoliaConfig, IPrivacyPresale, Ownable {
         uint256 liquidityPercentage; // max MAX_LIQUIDITY_PERCENTAGE = 100%
         uint64 hardCap;
         uint64 softCap;
+        uint64 maxContribution;
+        uint64 minContribution;
         uint128 start;
         uint128 end;
     }

@@ -31,6 +31,8 @@ const PURCHASE_AMOUNTS = {
 const PRESALE_CONFIG = {
   hardCap: ethers.parseUnits("10", 9), // 10 ETH
   softCap: ethers.parseUnits("6", 9), // 6 ETH
+  maxContribution: ethers.parseUnits("10", 9), // max 10
+  minContribution: ethers.parseUnits("0.1", 9), // min 0.1
   tokenPresale: ethers.parseUnits("1000000000", 18), // 1_000_000_000
   tokenAddLiquidity: ethers.parseUnits("1000000000", 18), // 1_000_000_000
   liquidityPercentage: BigInt(5000), // 50%
@@ -228,6 +230,8 @@ describe("PrivacyPresale integration flow", function () {
       liquidityPercentage: PRESALE_CONFIG.liquidityPercentage,
       hardCap: PRESALE_CONFIG.hardCap,
       softCap: PRESALE_CONFIG.softCap,
+      maxContribution: PRESALE_CONFIG.maxContribution,
+      minContribution: PRESALE_CONFIG.minContribution,
       start: BigInt(now - PRESALE_START_OFFSET),
       end: BigInt(now + PRESALE_DURATION),
     };
